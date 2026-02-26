@@ -880,6 +880,11 @@ final class TokenMeterTests: XCTestCase {
         let points = try runtime.collectTrack2Points(provider: .codex)
         _ = try await runtime.persistTrack2Points(points, store: track2Store)
 
+        let secondPassPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(secondPassPoints, [])
+        let secondPassPersisted = try await runtime.persistTrack2Points(secondPassPoints, store: track2Store)
+        XCTAssertEqual(secondPassPersisted, 0)
+
         try await refresher.refresh(settings: settings, now: Date(timeIntervalSince1970: 1_770_000_000))
 
         let persistedTrack1 = try await track1Store.loadAll()
@@ -897,6 +902,98 @@ final class TokenMeterTests: XCTestCase {
         let widgetSnapshot = try XCTUnwrap(WidgetSnapshotStore(containerURLOverride: widgetContainer).read())
         XCTAssertEqual(widgetSnapshot.track1.count, 1)
         XCTAssertEqual(widgetSnapshot.track2.count, 1)
+    }
+
+    func testOpenCodeTrack2RowsRemainVisibleAcrossProviderCalls() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        try writeOpenCodeMessage(
+            homeDirectoryURL: homeDir,
+            sessionID: "ses_opencode_codex_cursor",
+            messageID: "msg_assistant_codex_cursor",
+            payload: [
+                "role": "assistant",
+                "time": ["created": 1_770_100_000_000],
+                "providerID": "openai",
+                "modelID": "gpt-5.3-codex",
+                "tokens": ["input": 10, "output": 5],
+            ]
+        )
+
+        try writeOpenCodeMessage(
+            homeDirectoryURL: homeDir,
+            sessionID: "ses_opencode_claude_cursor",
+            messageID: "msg_assistant_claude_cursor",
+            payload: [
+                "role": "assistant",
+                "time": ["created": 1_770_100_001_000],
+                "providerID": "anthropic",
+                "modelID": "claude-sonnet-4-5",
+                "tokens": ["input": 9, "output": 6],
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let codexPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(codexPoints.count, 1)
+        XCTAssertEqual(codexPoints[0].provider, .codex)
+        XCTAssertEqual(codexPoints[0].totalTokens, 15)
+
+        let claudePoints = try runtime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(claudePoints.count, 1)
+        XCTAssertEqual(claudePoints[0].provider, .claude)
+        XCTAssertEqual(claudePoints[0].totalTokens, 15)
+    }
+
+    func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-26", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data(
+            """
+            {"timestamp":1770100000,"session_id":"ses_cursor","model":"gpt-5.3-codex","input_tokens":3,"output_tokens":2}
+            """.appending("\n").utf8
+        ).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.count, 1)
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 1)
+
+        let secondPassPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(secondPassPoints, [])
+
+        try appendText(
+            """
+            {"timestamp":1770100001,"session_id":"ses_cursor","input_tokens":4
+            """,
+            to: jsonlURL
+        )
+        let partialPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(partialPoints, [])
+
+        try appendText(",\"output_tokens\":6}\n", to: jsonlURL)
+        let appendedPoints = try runtime.collectTrack2Points(provider: .codex)
+        let appendedPersisted = try await runtime.persistTrack2Points(appendedPoints, store: track2Store)
+        XCTAssertEqual(appendedPersisted, 1)
+
+        let all = try await track2Store.loadAll()
+        XCTAssertEqual(all.count, 2)
+
+        let appendedPoint = try XCTUnwrap(
+            all.first(where: { Int($0.timestamp.timeIntervalSince1970) == 1_770_100_001 })
+        )
+        XCTAssertEqual(appendedPoint.model, "gpt-5.3-codex")
+        XCTAssertEqual(appendedPoint.totalTokens, 10)
     }
 
     func testCollectTrack1SnapshotClaudeMethodBOAuthUsageWindowsWithPlanFromProfile() throws {
@@ -2610,6 +2707,15 @@ private func writeClaudeOAuthCredentialsJSON(
     ]
     let data = try JSONSerialization.data(withJSONObject: payload)
     try data.write(to: url, options: [.atomic])
+}
+
+private func appendText(_ text: String, to url: URL) throws {
+    let handle = try FileHandle(forWritingTo: url)
+    defer { try? handle.close() }
+    try handle.seekToEnd()
+    if let data = text.data(using: .utf8) {
+        try handle.write(contentsOf: data)
+    }
 }
 
 private func writeOpenCodeMessage(

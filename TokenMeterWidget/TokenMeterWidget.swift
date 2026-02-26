@@ -968,37 +968,49 @@ private struct MiniBarAxisLabels: View {
 
 struct TokenMeterCodexWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: WidgetSharedConfig.codexWidgetKind, provider: TokenMeterWidgetProvider()) { entry in
-            if #available(macOS 14.0, *) {
-                TokenMeterProviderWidgetView(entry: entry, provider: .codex)
-                    .containerBackground(for: .widget) {
-                        Color(nsColor: .windowBackgroundColor)
-                    }
-            } else {
-                TokenMeterProviderWidgetView(entry: entry, provider: .codex)
-            }
-        }
-        .configurationDisplayName(localizedString("widget.config.codex.name"))
-        .description(localizedString("widget.config.codex.description"))
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        ProviderWidgetConfiguration.make(
+            kind: WidgetSharedConfig.codexWidgetKind,
+            provider: .codex,
+            displayNameKey: "widget.config.codex.name",
+            descriptionKey: "widget.config.codex.description"
+        )
     }
 }
 
 struct TokenMeterClaudeWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: WidgetSharedConfig.claudeWidgetKind, provider: TokenMeterWidgetProvider()) { entry in
-            if #available(macOS 14.0, *) {
-                TokenMeterProviderWidgetView(entry: entry, provider: .claude)
-                    .containerBackground(for: .widget) {
-                        Color(nsColor: .windowBackgroundColor)
-                    }
-            } else {
-                TokenMeterProviderWidgetView(entry: entry, provider: .claude)
-            }
+        ProviderWidgetConfiguration.make(
+            kind: WidgetSharedConfig.claudeWidgetKind,
+            provider: .claude,
+            displayNameKey: "widget.config.claude.name",
+            descriptionKey: "widget.config.claude.description"
+        )
+    }
+}
+
+@MainActor
+private enum ProviderWidgetConfiguration {
+    private static let supportedFamilies: [WidgetFamily] = [.systemSmall, .systemMedium, .systemLarge]
+
+    static func make(kind: String, provider: WidgetProvider, displayNameKey: String, descriptionKey: String) -> some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: TokenMeterWidgetProvider()) { entry in
+            providerContent(entry: entry, provider: provider)
         }
-        .configurationDisplayName(localizedString("widget.config.claude.name"))
-        .description(localizedString("widget.config.claude.description"))
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .configurationDisplayName(localizedString(displayNameKey))
+        .description(localizedString(descriptionKey))
+        .supportedFamilies(supportedFamilies)
+    }
+
+    @ViewBuilder
+    private static func providerContent(entry: TokenMeterWidgetProvider.Entry, provider: WidgetProvider) -> some View {
+        if #available(macOS 14.0, *) {
+            TokenMeterProviderWidgetView(entry: entry, provider: provider)
+                .containerBackground(for: .widget) {
+                    Color(nsColor: .windowBackgroundColor)
+                }
+        } else {
+            TokenMeterProviderWidgetView(entry: entry, provider: provider)
+        }
     }
 }
 

@@ -169,6 +169,9 @@ final class AppRuntime: ObservableObject {
                             "pointsPersisted": .int(persistedCount),
                         ]
                     )
+                    guard persistedCount > 0 else {
+                        return
+                    }
                 }
 
                 try await snapshotRefresher.refresh(settings: runtimeSettings)
@@ -202,6 +205,8 @@ enum CollectionPipelineError: Error {
 
 struct ProviderCollectionRuntime: Sendable {
     private static let openCodeTrack2ParserVersion = "opencode_track2_message_v1"
+    private static let track2ContextTailBytes = 64 * 1024
+    private static let track2IncrementalState = Track2IncrementalState()
 
     struct ProcessRunner: Sendable {
         enum Mode: Sendable {
@@ -1455,11 +1460,13 @@ struct ProviderCollectionRuntime: Sendable {
             where: { $0.pathExtension.lowercased() == "jsonl" }
         )
 
-        var primaryPoints: [Track2TimelinePoint] = []
-        for fileURL in primaryFiles {
-            let data = try Data(contentsOf: fileURL)
-            primaryPoints += CodexTrack2PrimaryParser.timelinePoints(from: data, sourceFile: fileURL.path)
-        }
+        let primaryPoints = collectIncrementalTrack2Points(
+            from: primaryFiles,
+            provider: .codex,
+            parser: { data, sourceFile in
+                CodexTrack2PrimaryParser.timelinePoints(from: data, sourceFile: sourceFile)
+            }
+        )
         let openCodePoints = try collectOpenCodeTrack2Points(provider: .codex)
         return deduplicatedTrack2Points(primaryPoints + openCodePoints).sorted(by: { $0.timestamp < $1.timestamp })
     }
@@ -1470,15 +1477,18 @@ struct ProviderCollectionRuntime: Sendable {
             homeDirectoryURL.appendingPathComponent(".config/claude/projects", isDirectory: true),
         ]
 
-        var points: [Track2TimelinePoint] = []
-
+        var secondaryFiles: [URL] = []
         for root in secondaryRoots {
-            let files = recursiveFiles(at: root, where: { $0.pathExtension.lowercased() == "jsonl" })
-            for fileURL in files {
-                let data = try Data(contentsOf: fileURL)
-                points += ClaudeTrack2SecondaryParser.timelinePoints(from: data, sourceFile: fileURL.path)
-            }
+            secondaryFiles += recursiveFiles(at: root, where: { $0.pathExtension.lowercased() == "jsonl" })
         }
+
+        var points: [Track2TimelinePoint] = collectIncrementalTrack2Points(
+            from: secondaryFiles,
+            provider: .claude,
+            parser: { data, sourceFile in
+                ClaudeTrack2SecondaryParser.timelinePoints(from: data, sourceFile: sourceFile)
+            }
+        )
 
         points += try collectOpenCodeTrack2Points(provider: .claude)
 
@@ -1496,21 +1506,32 @@ struct ProviderCollectionRuntime: Sendable {
             return []
         }
 
-        let rows = try queryOpenCodeAssistantRows(from: dbURL)
+        let homeKey = track2StateHomeKey()
+        let lastSeenRowID = Self.track2IncrementalState.openCodeCursor(homeKey: homeKey, provider: provider)
+        let rows = try queryOpenCodeAssistantRows(from: dbURL, afterRowID: lastSeenRowID)
+
         var points: [Track2TimelinePoint] = []
         points.reserveCapacity(rows.count)
+        var maxScannedRowID = lastSeenRowID
 
         for row in rows {
+            if row.rowID > maxScannedRowID {
+                maxScannedRowID = row.rowID
+            }
             guard let point = openCodeTrack2Point(from: row, provider: provider) else {
                 continue
             }
             points.append(point)
         }
 
+        if maxScannedRowID > lastSeenRowID {
+            Self.track2IncrementalState.setOpenCodeCursor(maxScannedRowID, homeKey: homeKey, provider: provider)
+        }
+
         return points
     }
 
-    private func queryOpenCodeAssistantRows(from dbURL: URL) throws -> [OpenCodeAssistantRow] {
+    private func queryOpenCodeAssistantRows(from dbURL: URL, afterRowID: Int64) throws -> [OpenCodeAssistantRow] {
         guard FileManager.default.fileExists(atPath: dbURL.path) else {
             return []
         }
@@ -1530,6 +1551,7 @@ struct ProviderCollectionRuntime: Sendable {
 
         let sql = """
         SELECT
+          rowid,
           COALESCE(json_extract(data, '$.id'), id),
           COALESCE(json_extract(data, '$.sessionID'), json_extract(data, '$.sessionId'), session_id),
           COALESCE(json_extract(data, '$.modelID'), json_extract(data, '$.model.modelID')),
@@ -1538,13 +1560,18 @@ struct ProviderCollectionRuntime: Sendable {
           json_extract(data, '$.tokens.input'),
           json_extract(data, '$.tokens.output')
         FROM message
-        WHERE json_extract(data, '$.role') = 'assistant';
+        WHERE json_extract(data, '$.role') = 'assistant' AND rowid > ?
+        ORDER BY rowid ASC;
         """
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
               let statement
         else {
+            return []
+        }
+        guard sqlite3_bind_int64(statement, 1, afterRowID) == SQLITE_OK else {
+            sqlite3_finalize(statement)
             return []
         }
         defer {
@@ -1555,18 +1582,162 @@ struct ProviderCollectionRuntime: Sendable {
         while sqlite3_step(statement) == SQLITE_ROW {
             rows.append(
                 OpenCodeAssistantRow(
-                    messageId: normalizedSQLiteText(sqliteColumnText(statement, index: 0)),
-                    sessionId: normalizedSQLiteText(sqliteColumnText(statement, index: 1)),
-                    modelId: normalizedSQLiteText(sqliteColumnText(statement, index: 2)),
-                    providerId: normalizedSQLiteText(sqliteColumnText(statement, index: 3)),
-                    timestamp: sqliteColumnDouble(statement, index: 4),
-                    inputTokens: sqliteColumnInt(statement, index: 5),
-                    outputTokens: sqliteColumnInt(statement, index: 6)
+                    rowID: sqlite3_column_int64(statement, 0),
+                    messageId: normalizedSQLiteText(sqliteColumnText(statement, index: 1)),
+                    sessionId: normalizedSQLiteText(sqliteColumnText(statement, index: 2)),
+                    modelId: normalizedSQLiteText(sqliteColumnText(statement, index: 3)),
+                    providerId: normalizedSQLiteText(sqliteColumnText(statement, index: 4)),
+                    timestamp: sqliteColumnDouble(statement, index: 5),
+                    inputTokens: sqliteColumnInt(statement, index: 6),
+                    outputTokens: sqliteColumnInt(statement, index: 7)
                 )
             )
         }
 
         return rows
+    }
+
+    private func collectIncrementalTrack2Points(
+        from files: [URL],
+        provider: ProviderId,
+        parser: (Data, String) -> [Track2TimelinePoint]
+    ) -> [Track2TimelinePoint] {
+        let homeKey = track2StateHomeKey()
+        let currentCursors = Self.track2IncrementalState.fileCursors(homeKey: homeKey, provider: provider)
+        var updatedCursors = currentCursors
+        var points: [Track2TimelinePoint] = []
+
+        for fileURL in files {
+            let filePath = fileURL.path
+            guard let metadata = track2FileMetadata(for: fileURL) else {
+                continue
+            }
+
+            let previousCursor = currentCursors[filePath]
+            var readOffset: Int64 = 0
+            var parsePrefix = Data()
+
+            if let previousCursor {
+                if previousCursor.matchesIdentity(with: metadata) == false || metadata.fileSize < previousCursor.offset {
+                    readOffset = 0
+                } else if metadata.fileSize == previousCursor.offset {
+                    if metadata.modifiedAt == previousCursor.modifiedAt {
+                        updatedCursors[filePath] = previousCursor
+                        continue
+                    }
+                    readOffset = 0
+                } else {
+                    readOffset = previousCursor.offset
+                    parsePrefix.reserveCapacity(previousCursor.contextTail.count + previousCursor.pendingTail.count)
+                    parsePrefix.append(previousCursor.contextTail)
+                    parsePrefix.append(previousCursor.pendingTail)
+                }
+            }
+
+            guard let deltaData = readTrack2FileData(fileURL, fromOffset: readOffset) else {
+                continue
+            }
+
+            var parseBuffer = parsePrefix
+            parseBuffer.append(deltaData)
+
+            let split = splitCompleteJSONLData(parseBuffer)
+            let parseData: Data
+            var pendingTail = split.pending
+            if readOffset == 0 {
+                parseData = parseBuffer
+                if pendingTail.isEmpty == false,
+                   parser(pendingTail, filePath).isEmpty == false
+                {
+                    pendingTail = Data()
+                }
+            } else if split.complete.count > parsePrefix.count {
+                parseData = split.complete
+            } else {
+                parseData = Data()
+            }
+
+            if parseData.isEmpty == false {
+                points += parser(parseData, filePath)
+            }
+
+            let contextSource = parseData.isEmpty ? (previousCursor?.contextTail ?? Data()) : parseData
+            let contextTail = trimmedTrack2ContextTail(contextSource)
+
+            updatedCursors[filePath] = Track2FileCursor(
+                inode: metadata.inode,
+                modifiedAt: metadata.modifiedAt,
+                fileSize: metadata.fileSize,
+                offset: metadata.fileSize,
+                pendingTail: pendingTail,
+                contextTail: contextTail
+            )
+        }
+
+        let activePaths = Set(files.map(\.path))
+        updatedCursors = updatedCursors.filter { activePaths.contains($0.key) }
+        Self.track2IncrementalState.setFileCursors(updatedCursors, homeKey: homeKey, provider: provider)
+
+        return points
+    }
+
+    private func track2FileMetadata(for fileURL: URL) -> Track2FileMetadata? {
+        guard let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let modificationDate = values.contentModificationDate,
+              let fileSize = values.fileSize
+        else {
+            return nil
+        }
+
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let inode = (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value
+
+        return Track2FileMetadata(
+            inode: inode,
+            modifiedAt: modificationDate.timeIntervalSince1970,
+            fileSize: Int64(fileSize)
+        )
+    }
+
+    private func readTrack2FileData(_ fileURL: URL, fromOffset offset: Int64) -> Data? {
+        guard offset >= 0, let safeOffset = UInt64(exactly: offset) else {
+            return nil
+        }
+
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+            return nil
+        }
+        defer {
+            try? handle.close()
+        }
+
+        do {
+            try handle.seek(toOffset: safeOffset)
+            return try handle.readToEnd() ?? Data()
+        } catch {
+            return nil
+        }
+    }
+
+    private func splitCompleteJSONLData(_ data: Data) -> (complete: Data, pending: Data) {
+        guard let lastLineFeedIndex = data.lastIndex(of: 0x0A) else {
+            return (Data(), data)
+        }
+
+        let splitIndex = data.index(after: lastLineFeedIndex)
+        return (Data(data[..<splitIndex]), Data(data[splitIndex...]))
+    }
+
+    private func trimmedTrack2ContextTail(_ data: Data) -> Data {
+        guard data.count > Self.track2ContextTailBytes else {
+            return data
+        }
+        let start = data.index(data.endIndex, offsetBy: -Self.track2ContextTailBytes)
+        return Data(data[start...])
+    }
+
+    private func track2StateHomeKey() -> String {
+        homeDirectoryURL.standardizedFileURL.path
     }
 
     private func openCodeTrack2Point(from row: OpenCodeAssistantRow, provider: ProviderId) -> Track2TimelinePoint? {
@@ -1686,6 +1857,7 @@ struct ProviderCollectionRuntime: Sendable {
     }
 
     private struct OpenCodeAssistantRow {
+        var rowID: Int64
         var messageId: String?
         var sessionId: String?
         var modelId: String?
@@ -1693,6 +1865,64 @@ struct ProviderCollectionRuntime: Sendable {
         var timestamp: Double?
         var inputTokens: Int?
         var outputTokens: Int?
+    }
+
+    private struct Track2FileMetadata {
+        var inode: UInt64?
+        var modifiedAt: TimeInterval
+        var fileSize: Int64
+    }
+
+    private struct Track2FileCursor {
+        var inode: UInt64?
+        var modifiedAt: TimeInterval
+        var fileSize: Int64
+        var offset: Int64
+        var pendingTail: Data
+        var contextTail: Data
+
+        func matchesIdentity(with metadata: Track2FileMetadata) -> Bool {
+            if let inode, let metadataInode = metadata.inode {
+                return inode == metadataInode
+            }
+            return true
+        }
+    }
+
+    private final class Track2IncrementalState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fileCursorsByHome: [String: [ProviderId: [String: Track2FileCursor]]] = [:]
+        private var openCodeCursorByHome: [String: [ProviderId: Int64]] = [:]
+
+        func fileCursors(homeKey: String, provider: ProviderId) -> [String: Track2FileCursor] {
+            lock.lock()
+            let cursors = fileCursorsByHome[homeKey]?[provider] ?? [:]
+            lock.unlock()
+            return cursors
+        }
+
+        func setFileCursors(_ cursors: [String: Track2FileCursor], homeKey: String, provider: ProviderId) {
+            lock.lock()
+            var providerCursors = fileCursorsByHome[homeKey] ?? [:]
+            providerCursors[provider] = cursors
+            fileCursorsByHome[homeKey] = providerCursors
+            lock.unlock()
+        }
+
+        func openCodeCursor(homeKey: String, provider: ProviderId) -> Int64 {
+            lock.lock()
+            let cursor = openCodeCursorByHome[homeKey]?[provider] ?? 0
+            lock.unlock()
+            return cursor
+        }
+
+        func setOpenCodeCursor(_ cursor: Int64, homeKey: String, provider: ProviderId) {
+            lock.lock()
+            var providerCursors = openCodeCursorByHome[homeKey] ?? [:]
+            providerCursors[provider] = cursor
+            openCodeCursorByHome[homeKey] = providerCursors
+            lock.unlock()
+        }
     }
 
     private func recursiveFiles(at root: URL, where shouldInclude: (URL) -> Bool) -> [URL] {
