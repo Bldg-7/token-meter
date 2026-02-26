@@ -1,0 +1,22 @@
+.DS_Store
+**/.DS_Store
+
+# Local build/cache artifacts
+.build/
+.bundle/
+.ruff_cache/
+build/
+dist/
+
+# Local agent/task state
+.sisyphus/
+
+# Vendored local gem bundle cache
+vendor/bundle/
+
+# Xcode user-specific data
+TokenMeter.xcodeproj/xcuserdata/
+*.xcuserstate
+
+# Test artifacts
+*.xcresult

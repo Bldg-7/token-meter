@@ -1,0 +1,12 @@
+{
+  "plan_label": "ChatGPT Pro",
+  "limits": [
+    {
+      "window_id": "rolling5hours",
+      "scope_label": " codex ",
+      "used_pct": 10.5,
+      "remaining_pct": 89.5,
+      "resets_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}

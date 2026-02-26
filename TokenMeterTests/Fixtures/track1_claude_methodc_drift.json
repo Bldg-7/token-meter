@@ -1,0 +1,14 @@
+{
+  "planLabel": "team",
+  "data": {
+    "items": [
+      {
+        "window": "model_specific",
+        "scope": " claude ",
+        "used": 33.3,
+        "remaining": 66.7,
+        "resetAt": 1767225600
+      }
+    ]
+  }
+}

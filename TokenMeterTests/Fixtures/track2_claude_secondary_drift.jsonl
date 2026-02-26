@@ -1,0 +1,2 @@
+{"event_time":"2026-01-05T00:00:01Z","thread_id":"thr_1","model_id":"claude-3-5-sonnet","usage":{"total_token_count":"17"}}
+{"createdat":1700001500,"session":"thr_2","modelname":"claude-3-7-sonnet","tokens_in":"3"}

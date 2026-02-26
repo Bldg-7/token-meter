@@ -1,0 +1,2 @@
+{"time":"2026-01-02T03:05:05Z","session":{"id":"sess_2"},"model_slug":"gpt-4.1","usage":{"inputTokens":"9"}}
+{"event_ts":1700000500000,"conversation_id":"sess_2","payload":{"metrics":{"cumulative_total_tokens":"101"}},"unknownField":true}

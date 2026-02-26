@@ -1,0 +1,122 @@
+name: DMG Packaging
+
+on:
+  push:
+    # Trigger on tag pushes like v1.2.3
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string to embed in artifacts/metadata (defaults to ref name)"
+        required: false
+        type: string
+      channel:
+        description: "Release channel for metadata"
+        required: true
+        type: choice
+        options:
+          - stable
+          - prerelease
+        default: stable
+
+jobs:
+  dmg-packaging:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Xcode Project (Release)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project TokenMeter.xcodeproj \
+            -scheme TokenMeter \
+            -configuration Release \
+            -derivedDataPath build \
+            -quiet
+        env:
+          DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+
+      - name: Prepare packaging
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          chmod +x scripts/packaging/dmg_packager.sh
+          chmod +x scripts/packaging/update_metadata.sh
+        shell: bash
+
+      - name: Create DMG artifact
+        env:
+          APP_BUNDLE_PATH: "./build/Build/Products/Release/TokenMeter.app"
+          OUTPUT_DIR: "./dist"
+          REF_NAME: "${{ github.ref_name }}"
+          EVENT_NAME: "${{ github.event_name }}"
+          INPUT_VERSION: "${{ inputs.version }}"
+        run: |
+          set -euo pipefail
+
+          VERSION_TAG="$REF_NAME"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "${INPUT_VERSION:-}" ]]; then
+            VERSION_TAG="$INPUT_VERSION"
+          fi
+
+          ./scripts/packaging/dmg_packager.sh "$APP_BUNDLE_PATH" "$OUTPUT_DIR" "$VERSION_TAG"
+        shell: bash
+
+      - name: Sign DMG (optional)
+        if: ${{ secrets.MACOS_CODESIGN_IDENTITY != '' }}
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          DMG_PATH="$(ls -1 dist/*.dmg | head -n 1)"
+          echo "[SIGN] Signing $DMG_PATH"
+          codesign --force --sign "$CODESIGN_IDENTITY" --timestamp "$DMG_PATH"
+          codesign --verify --verbose=2 "$DMG_PATH"
+        shell: bash
+
+      - name: Notarize DMG (optional)
+        if: ${{ secrets.NOTARYTOOL_KEYCHAIN_PROFILE != '' }}
+        env:
+          NOTARY_PROFILE: ${{ secrets.NOTARYTOOL_KEYCHAIN_PROFILE }}
+        run: |
+          set -euo pipefail
+          DMG_PATH="$(ls -1 dist/*.dmg | head -n 1)"
+          echo "[NOTARY] Submitting $DMG_PATH"
+          xcrun notarytool submit "$DMG_PATH" --wait --keychain-profile "$NOTARY_PROFILE"
+          xcrun stapler staple "$DMG_PATH"
+        shell: bash
+
+      - name: Update metadata
+        run: |
+          set -euo pipefail
+
+          REF_NAME="${{ github.ref_name }}"
+          EVENT_NAME="${{ github.event_name }}"
+          VERSION="$REF_NAME"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
+            VERSION="${{ inputs.version }}"
+          fi
+
+          CHANNEL="stable"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            CHANNEL="${{ inputs.channel }}"
+          else
+            if [[ "$REF_NAME" == *-* ]]; then
+              CHANNEL="prerelease"
+            fi
+          fi
+
+          ./scripts/packaging/update_metadata.sh --version "$VERSION" --channel "$CHANNEL" --output dist/metadata.json
+        shell: bash
+
+      - name: Upload DMG artifact (optional)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TokenMeter-DMG
+          path: dist/*.dmg
+          if-no-files-found: error

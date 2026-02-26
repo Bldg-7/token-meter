@@ -1,0 +1,12 @@
+{
+  "tier": "Plus",
+  "windows": [
+    {
+      "id": "weekly",
+      "raw_scope_label": "claude",
+      "usedPercent": 1.0,
+      "remainingPercent": 99.0,
+      "reset_ts": 1767225600000
+    }
+  ]
+}
