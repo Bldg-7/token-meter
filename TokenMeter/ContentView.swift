@@ -535,13 +535,13 @@ private struct Track1ProviderCard: View {
                     Badge(
                         text: String(
                             format: NSLocalizedString("content.badge.source_format", comment: "Source badge"),
-                            snapshot.source.rawValue
+                            localizedTrack1SourceLabel(snapshot.source)
                         )
                     )
                     Badge(
                         text: String(
                             format: NSLocalizedString("content.badge.confidence_format", comment: "Confidence badge"),
-                            snapshot.confidence.rawValue
+                            localizedTrackConfidenceLabel(snapshot.confidence)
                         )
                     )
                 } else {
@@ -576,22 +576,14 @@ private struct Track1ProviderCard: View {
             return NSLocalizedString("content.plan.unknown", comment: "Unknown plan badge")
         }
 
-        let raw = snapshot.plan.rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if raw.isEmpty {
+        if snapshot.plan == .unknown {
             return NSLocalizedString("content.plan.unknown", comment: "Unknown plan badge")
         }
 
         return String(
             format: NSLocalizedString("content.plan.value_format", comment: "Plan badge with plan value"),
-            capitalizedFirstLetter(raw)
+            localizedTrack1PlanLabel(snapshot.plan)
         )
-    }
-
-    private func capitalizedFirstLetter(_ value: String) -> String {
-        guard value.isEmpty == false else { return value }
-        let first = value.prefix(1).uppercased()
-        let rest = value.dropFirst()
-        return first + rest
     }
 
     private func menuVisibleWindows(from snapshot: Track1Snapshot) -> [Track1Window] {
@@ -609,7 +601,7 @@ private struct Track1WindowRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(window.windowId.rawValue)
+                Text(localizedTrack1WindowTitle(window.windowId))
                     .font(.caption2.weight(.semibold))
 
                 Spacer(minLength: 8)
@@ -625,7 +617,7 @@ private struct Track1WindowRow: View {
                 ProgressView(value: usedPercent / 100.0)
                     .controlSize(.small)
             } else {
-                Text(window.rawScopeLabel)
+                Text(localizedTrack1ScopeLabel(window.rawScopeLabel))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -660,7 +652,7 @@ private struct Track2ProviderCard: View {
                     Badge(
                         text: String(
                             format: NSLocalizedString("content.badge.confidence_format", comment: "Confidence badge"),
-                            last.confidence.rawValue
+                            localizedTrackConfidenceLabel(last.confidence)
                         )
                     )
                     Badge(
@@ -729,6 +721,93 @@ private struct Track2ProviderCard: View {
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: now)
     }
+}
+
+private func localizedTrackConfidenceLabel(_ confidence: TrackConfidence) -> String {
+    switch confidence {
+    case .high:
+        return NSLocalizedString("content.badge.confidence.high", comment: "High confidence")
+    case .medium:
+        return NSLocalizedString("content.badge.confidence.medium", comment: "Medium confidence")
+    case .low:
+        return NSLocalizedString("content.badge.confidence.low", comment: "Low confidence")
+    }
+}
+
+private func localizedTrack1SourceLabel(_ source: Track1Source) -> String {
+    switch source {
+    case .cliMethodB:
+        return NSLocalizedString("content.badge.source.cli_method_b", comment: "CLI Method B source")
+    case .webMethodC:
+        return NSLocalizedString("content.badge.source.web_method_c", comment: "Web Method C source")
+    }
+}
+
+private func localizedTrack1PlanLabel(_ plan: Track1PlanLabel) -> String {
+    switch plan {
+    case .free:
+        return NSLocalizedString("content.plan.free", comment: "Free plan")
+    case .plus:
+        return NSLocalizedString("content.plan.plus", comment: "Plus plan")
+    case .pro:
+        return NSLocalizedString("content.plan.pro", comment: "Pro plan")
+    case .max:
+        return NSLocalizedString("content.plan.max", comment: "Max plan")
+    case .team:
+        return NSLocalizedString("content.plan.team", comment: "Team plan")
+    case .business:
+        return NSLocalizedString("content.plan.business", comment: "Business plan")
+    case .enterprise:
+        return NSLocalizedString("content.plan.enterprise", comment: "Enterprise plan")
+    case .unknown:
+        return NSLocalizedString("content.plan.unknown_value", comment: "Unknown plan value")
+    }
+}
+
+private func localizedTrack1WindowTitle(_ windowId: Track1WindowId) -> String {
+    switch windowId {
+    case .session:
+        return NSLocalizedString("content.track1.window.session", comment: "Session window title")
+    case .rolling5h:
+        return NSLocalizedString("content.track1.window.rolling_5h", comment: "Rolling 5h window title")
+    case .weekly:
+        return NSLocalizedString("content.track1.window.weekly", comment: "Weekly window title")
+    case .modelSpecific:
+        return NSLocalizedString("content.track1.window.model_specific", comment: "Model-specific window title")
+    }
+}
+
+private func localizedTrack1ScopeLabel(_ rawScopeLabel: String) -> String {
+    let trimmed = rawScopeLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.isEmpty == false else {
+        return NSLocalizedString("content.track1.scope.unknown", comment: "Unknown scope label")
+    }
+
+    switch trimmed.lowercased() {
+    case "codex":
+        return NSLocalizedString("content.track1.scope.codex", comment: "Codex scope label")
+    case "claude":
+        return NSLocalizedString("content.track1.scope.claude", comment: "Claude scope label")
+    case "session":
+        return localizedTrack1WindowTitle(.session)
+    case "rolling_5h":
+        return localizedTrack1WindowTitle(.rolling5h)
+    case "weekly":
+        return localizedTrack1WindowTitle(.weekly)
+    case "model_specific":
+        return localizedTrack1WindowTitle(.modelSpecific)
+    default:
+        return humanizedTrackScopeLabel(trimmed)
+    }
+}
+
+private func humanizedTrackScopeLabel(_ value: String) -> String {
+    let normalized = value
+        .replacingOccurrences(of: "_", with: " ")
+        .replacingOccurrences(of: "-", with: " ")
+        .split(whereSeparator: \.isWhitespace)
+        .joined(separator: " ")
+    return normalized.isEmpty ? value : normalized
 }
 
 private enum TrackHealthStatus: String {

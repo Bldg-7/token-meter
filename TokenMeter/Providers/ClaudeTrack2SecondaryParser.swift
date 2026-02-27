@@ -1,7 +1,7 @@
 import Foundation
 
 struct ClaudeTrack2SecondaryParser {
-    static let parserVersion = "claude_track2_secondary_v1"
+    static let parserVersion = "claude_track2_secondary_v2"
     static let sourceMarker = "secondary_local"
 
     static func timelinePoints(from data: Data, sourceFile: String) -> [Track2TimelinePoint] {
@@ -13,19 +13,21 @@ struct ClaudeTrack2SecondaryParser {
 
     static func timelinePoints(fromJSONL text: String, sourceFile: String) -> [Track2TimelinePoint] {
         let taggedSourceFile = "\(sourceMarker):\(sourceFile)"
-        var points: [Track2TimelinePoint] = []
+        var parsedLines: [ParsedClaudeSecondaryLine] = []
 
         text.enumerateLines { line, _ in
-            guard let point = parseLine(line, sourceFile: taggedSourceFile) else {
+            guard let parsedLine = parseLine(line) else {
                 return
             }
-            points.append(point)
+            parsedLines.append(parsedLine)
         }
 
-        return deduplicate(points)
+        return deduplicate(parsedLines).compactMap { parsedLine in
+            makePoint(from: parsedLine, sourceFile: taggedSourceFile)
+        }
     }
 
-    private static func parseLine(_ rawLine: String, sourceFile: String) -> Track2TimelinePoint? {
+    private static func parseLine(_ rawLine: String) -> ParsedClaudeSecondaryLine? {
         let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         guard line.isEmpty == false else {
             return nil
@@ -58,13 +60,34 @@ struct ClaudeTrack2SecondaryParser {
             return nil
         }
 
-        let promptTokens = firstClaudeSecondaryInt(
+        let inputTokens = firstClaudeSecondaryInt(
             in: kv,
             keyCandidates: [
                 "prompt_tokens", "prompttokens", "input_tokens", "inputtokens", "prompt_token_count", "input_token_count",
                 "prompt_tokens_delta", "input_tokens_delta", "delta_prompt_tokens", "delta_input_tokens", "tokens_in",
             ]
         )
+
+        let cacheReadTokens = firstClaudeSecondaryInt(
+            in: kv,
+            keyCandidates: [
+                "cache_read_input_tokens", "cache_read_tokens", "cached_input_tokens",
+            ]
+        )
+
+        var cacheCreationTokens = firstClaudeSecondaryInt(
+            in: kv,
+            keyCandidates: [
+                "cache_creation_input_tokens", "cache_creation_tokens", "cache_write_input_tokens", "cached_creation_input_tokens",
+            ]
+        )
+
+        if cacheCreationTokens == nil {
+            cacheCreationTokens = sumClaudeSecondaryInts(
+                in: kv,
+                keyCandidates: ["ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"]
+            )
+        }
 
         let completionTokens = firstClaudeSecondaryInt(
             in: kv,
@@ -83,18 +106,21 @@ struct ClaudeTrack2SecondaryParser {
             ]
         )
 
+        var promptComponents: [Int] = []
+        if let inputTokens {
+            promptComponents.append(inputTokens)
+        }
+        if let cacheReadTokens {
+            promptComponents.append(cacheReadTokens)
+        }
+        if let cacheCreationTokens {
+            promptComponents.append(cacheCreationTokens)
+        }
+        let promptTokens = promptComponents.isEmpty ? nil : promptComponents.reduce(0, +)
+
         let hasTokenData = promptTokens != nil || completionTokens != nil || totalTokensDirect != nil
         guard hasTokenData else {
             return nil
-        }
-
-        let totalTokens: Int?
-        if let totalTokensDirect {
-            totalTokens = totalTokensDirect
-        } else if let promptTokens, let completionTokens {
-            totalTokens = promptTokens + completionTokens
-        } else {
-            totalTokens = nil
         }
 
         let sessionId = firstClaudeSecondaryString(
@@ -107,8 +133,42 @@ struct ClaudeTrack2SecondaryParser {
             keyCandidates: ["model", "model_name", "modelname", "model_slug", "modelslug", "model_id", "modelid"]
         )
 
+        let requestId = firstClaudeSecondaryString(
+            in: kv,
+            keyCandidates: ["request_id", "requestid"]
+        )
+
+        let messageId = nestedClaudeSecondaryString(in: object, path: ["message", "id"])
+
+        return ParsedClaudeSecondaryLine(
+            timestamp: timestamp,
+            sessionId: sessionId,
+            model: model,
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokensDirect: totalTokensDirect,
+            requestId: requestId,
+            messageId: messageId
+        )
+    }
+
+    private static func makePoint(from parsed: ParsedClaudeSecondaryLine, sourceFile: String) -> Track2TimelinePoint? {
+        let totalTokens: Int?
+        if let totalTokensDirect = parsed.totalTokensDirect {
+            totalTokens = totalTokensDirect
+        } else if let promptTokens = parsed.promptTokens, let completionTokens = parsed.completionTokens {
+            totalTokens = promptTokens + completionTokens
+        } else {
+            totalTokens = nil
+        }
+
         let confidence: TrackConfidence
-        if promptTokens != nil && completionTokens != nil && totalTokens != nil && sessionId != nil && model != nil {
+        if parsed.promptTokens != nil,
+           parsed.completionTokens != nil,
+           totalTokens != nil,
+           parsed.sessionId != nil,
+           parsed.model != nil
+        {
             confidence = .medium
         } else {
             confidence = .low
@@ -116,11 +176,11 @@ struct ClaudeTrack2SecondaryParser {
 
         return Track2TimelinePoint(
             provider: .claude,
-            timestamp: timestamp,
-            sessionId: sessionId,
-            model: model,
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
+            timestamp: parsed.timestamp,
+            sessionId: parsed.sessionId,
+            model: parsed.model,
+            promptTokens: parsed.promptTokens,
+            completionTokens: parsed.completionTokens,
             totalTokens: totalTokens,
             sourceFile: sourceFile,
             confidence: confidence,
@@ -128,30 +188,114 @@ struct ClaudeTrack2SecondaryParser {
         )
     }
 
-    private static func deduplicate(_ points: [Track2TimelinePoint]) -> [Track2TimelinePoint] {
-        var seen: Set<String> = []
-        var deduped: [Track2TimelinePoint] = []
-        deduped.reserveCapacity(points.count)
+    private static func deduplicate(_ parsedLines: [ParsedClaudeSecondaryLine]) -> [ParsedClaudeSecondaryLine] {
+        var byIdentity: [String: ParsedClaudeSecondaryLine] = [:]
+        var identityOrder: [String] = []
+        var passthrough: [ParsedClaudeSecondaryLine] = []
 
-        for point in points {
-            let key = dedupKey(for: point)
+        for parsedLine in parsedLines {
+            guard let identityKey = identityKey(for: parsedLine) else {
+                passthrough.append(parsedLine)
+                continue
+            }
+
+            if let existing = byIdentity[identityKey] {
+                if shouldPrefer(parsedLine, over: existing) {
+                    byIdentity[identityKey] = parsedLine
+                }
+            } else {
+                byIdentity[identityKey] = parsedLine
+                identityOrder.append(identityKey)
+            }
+        }
+
+        var merged: [ParsedClaudeSecondaryLine] = []
+        merged.reserveCapacity(parsedLines.count)
+        for identityKey in identityOrder {
+            if let parsedLine = byIdentity[identityKey] {
+                merged.append(parsedLine)
+            }
+        }
+        merged.append(contentsOf: passthrough)
+
+        var seen: Set<String> = []
+        var deduped: [ParsedClaudeSecondaryLine] = []
+        deduped.reserveCapacity(merged.count)
+        for parsedLine in merged {
+            let key = dedupKey(for: parsedLine)
             if seen.insert(key).inserted {
-                deduped.append(point)
+                deduped.append(parsedLine)
             }
         }
 
         return deduped
     }
 
-    private static func dedupKey(for point: Track2TimelinePoint) -> String {
-        let ts = Int64((point.timestamp.timeIntervalSince1970 * 1000.0).rounded())
-        let session = (point.sessionId ?? "").lowercased()
-        let model = (point.model ?? "").lowercased()
-        let prompt = point.promptTokens.map(String.init) ?? "-"
-        let completion = point.completionTokens.map(String.init) ?? "-"
-        let total = point.totalTokens.map(String.init) ?? "-"
+    private static func identityKey(for parsedLine: ParsedClaudeSecondaryLine) -> String? {
+        if let requestId = normalizedClaudeSecondaryIdentity(parsedLine.requestId) {
+            return "request:\(requestId)"
+        }
+        if let messageId = normalizedClaudeSecondaryIdentity(parsedLine.messageId) {
+            let session = normalizedClaudeSecondaryIdentity(parsedLine.sessionId) ?? "__unknown_session__"
+            return "message:\(session)|\(messageId)"
+        }
+        return nil
+    }
+
+    private static func shouldPrefer(_ candidate: ParsedClaudeSecondaryLine, over existing: ParsedClaudeSecondaryLine) -> Bool {
+        let candidateTotal = effectiveTotalTokens(for: candidate) ?? -1
+        let existingTotal = effectiveTotalTokens(for: existing) ?? -1
+        if candidateTotal != existingTotal {
+            return candidateTotal > existingTotal
+        }
+
+        if candidate.timestamp != existing.timestamp {
+            return candidate.timestamp > existing.timestamp
+        }
+
+        return completenessScore(for: candidate) > completenessScore(for: existing)
+    }
+
+    private static func effectiveTotalTokens(for parsedLine: ParsedClaudeSecondaryLine) -> Int? {
+        if let totalTokensDirect = parsedLine.totalTokensDirect {
+            return totalTokensDirect
+        }
+        if let promptTokens = parsedLine.promptTokens, let completionTokens = parsedLine.completionTokens {
+            return promptTokens + completionTokens
+        }
+        return nil
+    }
+
+    private static func completenessScore(for parsedLine: ParsedClaudeSecondaryLine) -> Int {
+        var score = 0
+        if parsedLine.promptTokens != nil { score += 1 }
+        if parsedLine.completionTokens != nil { score += 1 }
+        if parsedLine.totalTokensDirect != nil { score += 1 }
+        if parsedLine.sessionId != nil { score += 1 }
+        if parsedLine.model != nil { score += 1 }
+        return score
+    }
+
+    private static func dedupKey(for parsedLine: ParsedClaudeSecondaryLine) -> String {
+        let ts = Int64((parsedLine.timestamp.timeIntervalSince1970 * 1000.0).rounded())
+        let session = (parsedLine.sessionId ?? "").lowercased()
+        let model = (parsedLine.model ?? "").lowercased()
+        let prompt = parsedLine.promptTokens.map(String.init) ?? "-"
+        let completion = parsedLine.completionTokens.map(String.init) ?? "-"
+        let total = effectiveTotalTokens(for: parsedLine).map(String.init) ?? "-"
         return "\(ts)|\(session)|\(model)|\(prompt)|\(completion)|\(total)"
     }
+}
+
+private struct ParsedClaudeSecondaryLine {
+    var timestamp: Date
+    var sessionId: String?
+    var model: String?
+    var promptTokens: Int?
+    var completionTokens: Int?
+    var totalTokensDirect: Int?
+    var requestId: String?
+    var messageId: String?
 }
 
 private struct ClaudeSecondaryFlatKeyValue {
@@ -220,6 +364,24 @@ private func firstClaudeSecondaryInt(in kv: [ClaudeSecondaryFlatKeyValue], keyCa
     return nil
 }
 
+private func sumClaudeSecondaryInts(in kv: [ClaudeSecondaryFlatKeyValue], keyCandidates: [String]) -> Int? {
+    var total = 0
+    var matched = false
+
+    for candidate in keyCandidates {
+        let normalizedCandidate = normalizeClaudeSecondaryKey(candidate)
+        let matches = kv.filter { $0.key == normalizedCandidate }
+        for match in matches {
+            if let value = asClaudeSecondaryNonNegativeInt(match.value) {
+                total += value
+                matched = true
+            }
+        }
+    }
+
+    return matched ? total : nil
+}
+
 private func firstClaudeSecondaryDate(in kv: [ClaudeSecondaryFlatKeyValue], keyCandidates: [String]) -> Date? {
     for candidate in keyCandidates {
         let normalizedCandidate = normalizeClaudeSecondaryKey(candidate)
@@ -239,6 +401,28 @@ private func firstClaudeSecondaryDate(in kv: [ClaudeSecondaryFlatKeyValue], keyC
         }
     }
     return nil
+}
+
+private func nestedClaudeSecondaryString(in object: [String: Any], path: [String]) -> String? {
+    var cursor: Any = object
+    for component in path {
+        guard let dict = cursor as? [String: Any] else {
+            return nil
+        }
+        let normalizedComponent = normalizeClaudeSecondaryKey(component)
+        guard let next = dict.first(where: { normalizeClaudeSecondaryKey($0.key) == normalizedComponent })?.value else {
+            return nil
+        }
+        cursor = next
+    }
+    return asClaudeSecondaryNonEmptyString(cursor)
+}
+
+private func normalizedClaudeSecondaryIdentity(_ raw: String?) -> String? {
+    guard let raw else { return nil }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.isEmpty == false else { return nil }
+    return trimmed.lowercased()
 }
 
 private func normalizeClaudeSecondaryKey(_ key: String) -> String {

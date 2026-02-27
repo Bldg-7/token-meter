@@ -325,8 +325,12 @@ private struct TokenMeterProviderWidgetView: View {
             return localizedString("widget.quota_5h")
         case "weekly":
             return localizedString("widget.quota_week")
+        case "session":
+            return localizedString("widget.quota_session")
+        case "model_specific":
+            return localizedString("widget.quota_model_specific")
         default:
-            return windowId
+            return humanizedWidgetLabel(windowId)
         }
     }
 
@@ -399,6 +403,7 @@ private struct TokenMeterProviderWidgetView: View {
     private func track2Graphic(track2: WidgetSnapshot.Track2Summary?) -> some View {
         let bars = stackedSeriesBars(track2: track2)
         let bucketSeconds = inferredBucketSeconds(from: bars)
+        let yAxis = yAxisLabels(from: bars)
 
         if bars.isEmpty {
             Text("widget.no_local_telemetry")
@@ -406,17 +411,29 @@ private struct TokenMeterProviderWidgetView: View {
                 .foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 4) {
-                DotStackedBarGraph(
-                    bars: bars,
-                    maxDots: dotRowCount
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: dotGraphHeight)
-                MiniBarAxisLabels(
-                    bars: axisBars(from: bars),
-                    bucketSeconds: bucketSeconds
-                )
+                HStack(alignment: .top, spacing: 4) {
+                    DotMatrixYAxisLabels(
+                        topLabel: yAxis.top,
+                        midLabel: yAxis.mid,
+                        bottomLabel: yAxis.bottom
+                    )
+                    .frame(width: dotYAxisLabelWidth, height: dotGraphHeight)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        DotStackedBarGraph(
+                            bars: bars,
+                            maxDots: dotRowCount
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: dotGraphHeight)
+
+                        MiniBarAxisLabels(
+                            bars: axisBars(from: bars),
+                            bucketSeconds: bucketSeconds
+                        )
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 if family == .systemLarge {
                     largeTrack2Legend(bars: bars)
@@ -509,6 +526,29 @@ private struct TokenMeterProviderWidgetView: View {
         return formatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 
+    private func formatTokenCountNoDecimal(_ value: Int) -> String {
+        let magnitude = abs(value)
+        let sign = value < 0 ? "-" : ""
+
+        if magnitude >= 1_000_000_000 {
+            let compact = Int((Double(magnitude) / 1_000_000_000).rounded())
+            return "\(sign)\(compact)B"
+        }
+        if magnitude >= 1_000_000 {
+            let compact = Int((Double(magnitude) / 1_000_000).rounded())
+            return "\(sign)\(compact)M"
+        }
+        if magnitude >= 1_000 {
+            let compact = Int((Double(magnitude) / 1_000).rounded())
+            return "\(sign)\(compact)K"
+        }
+
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        let numberText = formatter.string(from: NSNumber(value: magnitude)) ?? String(magnitude)
+        return "\(sign)\(numberText)"
+    }
+
     private func formattedCompactTokenValue(_ value: Double) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
@@ -544,6 +584,19 @@ private struct TokenMeterProviderWidgetView: View {
         }
     }
 
+    private var dotYAxisLabelWidth: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 16
+        case .systemMedium:
+            return 22
+        case .systemLarge:
+            return 26
+        default:
+            return 22
+        }
+    }
+
     private var graphColumnCount: Int {
         switch family {
         case .systemSmall:
@@ -555,6 +608,26 @@ private struct TokenMeterProviderWidgetView: View {
         default:
             return 48
         }
+    }
+
+    private func yAxisLabels(from bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]) -> (top: String, mid: String, bottom: String) {
+        let maxTokens = bars
+            .map { bar in
+                bar.segments.reduce(0) { partial, segment in
+                    partial + max(0, segment.totalTokens)
+                }
+            }
+            .max() ?? 0
+
+        if maxTokens <= 0 {
+            return ("0", "0", "0")
+        }
+
+        return (
+            top: formatTokenCountNoDecimal(maxTokens),
+            mid: formatTokenCountNoDecimal(max(0, maxTokens / 2)),
+            bottom: "0"
+        )
     }
 
     private func stackedSeriesBars(track2: WidgetSnapshot.Track2Summary?) -> [WidgetSnapshot.Track2Summary.StackedSeriesBar] {
@@ -672,7 +745,45 @@ private struct TokenMeterProviderWidgetView: View {
 }
 
 private func localizedString(_ key: String) -> String {
-    String(localized: String.LocalizationValue(key))
+    NSLocalizedString(key, bundle: .main, value: key, comment: "")
+}
+
+private func humanizedWidgetLabel(_ value: String) -> String {
+    let normalized = value
+        .replacingOccurrences(of: "_", with: " ")
+        .replacingOccurrences(of: "-", with: " ")
+        .split(whereSeparator: \.isWhitespace)
+        .joined(separator: " ")
+    return normalized.isEmpty ? value : normalized
+}
+
+private struct DotMatrixYAxisLabels: View {
+    var topLabel: String
+    var midLabel: String
+    var bottomLabel: String
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(topLabel)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Spacer(minLength: 2)
+
+            Text(midLabel)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Spacer(minLength: 2)
+
+            Text(bottomLabel)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .font(.system(size: 8, weight: .regular, design: .rounded))
+        .foregroundStyle(.tertiary)
+        .frame(maxHeight: .infinity, alignment: .topTrailing)
+    }
 }
 
 private struct DotStackedBarGraph: View {

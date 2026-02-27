@@ -1,7 +1,7 @@
 import Foundation
 
 struct CodexTrack2PrimaryParser {
-    static let parserVersion = "codex_track2_primary_v1"
+    static let parserVersion = "codex_track2_primary_v2"
     fileprivate static let nearbyModelLineWindow = 6
     fileprivate static let nearbyModelHistoryLimit = 64
 
@@ -15,6 +15,8 @@ struct CodexTrack2PrimaryParser {
     static func timelinePoints(fromJSONL text: String, sourceFile: String) -> [Track2TimelinePoint] {
         var points: [Track2TimelinePoint] = []
         var lastKnownModelBySession: [String: String] = [:]
+        var lastCumulativeTotalsBySession: [String: Int] = [:]
+        var seenCumulativeTotals: Set<String> = []
         var recentModels: [RecentModelContext] = []
         var lineIndex = 0
 
@@ -37,7 +39,19 @@ struct CodexTrack2PrimaryParser {
                 )
             }
 
-            guard var point = makePoint(from: parsed, sourceFile: sourceFile) else {
+            if let cumulativeTotalTokens = parsed.cumulativeTotalTokens {
+                let sessionKey = normalizedSessionKey(parsed.sessionId)
+                let dedupKey = "\(sessionKey)|\(cumulativeTotalTokens)"
+                if seenCumulativeTotals.insert(dedupKey).inserted == false {
+                    return
+                }
+            }
+
+            guard var point = makePoint(
+                from: parsed,
+                sourceFile: sourceFile,
+                lastCumulativeTotalsBySession: &lastCumulativeTotalsBySession
+            ) else {
                 return
             }
 
@@ -99,7 +113,30 @@ struct CodexTrack2PrimaryParser {
             ]
         )
 
-        let promptTokens = firstInt(
+        let eventType = firstString(
+            in: kv,
+            keyCandidates: ["event_type", "eventtype", "type", "event"]
+        )
+        let isTokenCountEvent = normalizedEventType(eventType) == "token_count"
+
+        let lastUsage = codexUsage(
+            in: object,
+            pathCandidates: [
+                ["payload", "info", "last_token_usage"],
+                ["info", "last_token_usage"],
+                ["last_token_usage"],
+            ]
+        )
+        let totalUsage = codexUsage(
+            in: object,
+            pathCandidates: [
+                ["payload", "info", "total_token_usage"],
+                ["info", "total_token_usage"],
+                ["total_token_usage"],
+            ]
+        )
+
+        let genericPromptTokens = firstInt(
             in: kv,
             keyCandidates: [
                 "prompt_tokens", "prompttokens", "input_tokens", "inputtokens", "prompt_token_count", "input_token_count",
@@ -107,7 +144,7 @@ struct CodexTrack2PrimaryParser {
             ]
         )
 
-        let completionTokens = firstInt(
+        let genericCompletionTokens = firstInt(
             in: kv,
             keyCandidates: [
                 "completion_tokens", "completiontokens", "output_tokens", "outputtokens", "completion_token_count", "output_token_count",
@@ -115,12 +152,31 @@ struct CodexTrack2PrimaryParser {
             ]
         )
 
-        let totalTokensDirect = firstInt(
+        let genericTotalTokensDirect = firstInt(
             in: kv,
             keyCandidates: [
                 "total_tokens", "totaltokens", "token_count", "tokencount", "usage_tokens", "total_token_count",
-                "total_tokens_delta", "delta_total_tokens", "tokens_total", "cumulative_total_tokens",
-                "running_total_tokens", "total_tokens_cumulative", "aggregate_total_tokens",
+                "total_tokens_delta", "delta_total_tokens", "tokens_total",
+            ]
+        )
+
+        let promptTokens: Int?
+        let completionTokens: Int?
+        let totalTokensDirect: Int?
+        if isTokenCountEvent {
+            promptTokens = lastUsage?.promptTokens
+            completionTokens = lastUsage?.completionTokens
+            totalTokensDirect = lastUsage?.totalTokens
+        } else {
+            promptTokens = lastUsage?.promptTokens ?? genericPromptTokens
+            completionTokens = lastUsage?.completionTokens ?? genericCompletionTokens
+            totalTokensDirect = lastUsage?.totalTokens ?? genericTotalTokensDirect
+        }
+
+        let cumulativeTotalTokens = totalUsage?.totalTokens ?? firstInt(
+            in: kv,
+            keyCandidates: [
+                "cumulative_total_tokens", "running_total_tokens", "total_tokens_cumulative", "aggregate_total_tokens",
             ]
         )
 
@@ -140,12 +196,20 @@ struct CodexTrack2PrimaryParser {
             model: model,
             promptTokens: promptTokens,
             completionTokens: completionTokens,
-            totalTokensDirect: totalTokensDirect
+            totalTokensDirect: totalTokensDirect,
+            cumulativeTotalTokens: cumulativeTotalTokens
         )
     }
 
-    private static func makePoint(from parsed: ParsedCodexLine, sourceFile: String) -> Track2TimelinePoint? {
-        let hasTokenData = parsed.promptTokens != nil || parsed.completionTokens != nil || parsed.totalTokensDirect != nil
+    private static func makePoint(
+        from parsed: ParsedCodexLine,
+        sourceFile: String,
+        lastCumulativeTotalsBySession: inout [String: Int]
+    ) -> Track2TimelinePoint? {
+        let hasTokenData = parsed.promptTokens != nil
+            || parsed.completionTokens != nil
+            || parsed.totalTokensDirect != nil
+            || parsed.cumulativeTotalTokens != nil
         guard hasTokenData else {
             return nil
         }
@@ -154,13 +218,26 @@ struct CodexTrack2PrimaryParser {
             return nil
         }
 
-        let totalTokens: Int?
+        let sessionKey = normalizedSessionKey(parsed.sessionId)
+        let previousCumulativeTotal = lastCumulativeTotalsBySession[sessionKey]
+        if let cumulativeTotalTokens = parsed.cumulativeTotalTokens {
+            if let existing = previousCumulativeTotal {
+                lastCumulativeTotalsBySession[sessionKey] = max(existing, cumulativeTotalTokens)
+            } else {
+                lastCumulativeTotalsBySession[sessionKey] = cumulativeTotalTokens
+            }
+        }
+
+        var totalTokens: Int?
         if let totalTokensDirect = parsed.totalTokensDirect {
             totalTokens = totalTokensDirect
         } else if let promptTokens = parsed.promptTokens, let completionTokens = parsed.completionTokens {
             totalTokens = promptTokens + completionTokens
-        } else {
-            totalTokens = nil
+        } else if let cumulativeTotalTokens = parsed.cumulativeTotalTokens,
+                  let previousCumulativeTotal,
+                  cumulativeTotalTokens > previousCumulativeTotal
+        {
+            totalTokens = cumulativeTotalTokens - previousCumulativeTotal
         }
 
         let confidence: TrackConfidence
@@ -192,6 +269,13 @@ private struct ParsedCodexLine {
     var promptTokens: Int?
     var completionTokens: Int?
     var totalTokensDirect: Int?
+    var cumulativeTotalTokens: Int?
+}
+
+private struct CodexUsageSnapshot {
+    var promptTokens: Int?
+    var completionTokens: Int?
+    var totalTokens: Int?
 }
 
 private struct RecentModelContext {
@@ -238,6 +322,73 @@ private func normalizedModel(_ model: String?) -> String? {
     guard let model else { return nil }
     let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+}
+
+private func normalizedSessionKey(_ sessionId: String?) -> String {
+    let trimmed = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? "__unknown_session__" : trimmed.lowercased()
+}
+
+private func normalizedEventType(_ eventType: String?) -> String {
+    normalizeKey(eventType ?? "")
+}
+
+private func codexUsage(in object: [String: Any], pathCandidates: [[String]]) -> CodexUsageSnapshot? {
+    for path in pathCandidates {
+        guard let dict = nestedCodexDictionary(in: object, path: path) else {
+            continue
+        }
+
+        let promptTokens = codexInt(
+            in: dict,
+            keyCandidates: ["input_tokens", "prompt_tokens", "tokens_in", "inputtokens", "prompttokens"]
+        )
+        let completionTokens = codexInt(
+            in: dict,
+            keyCandidates: ["output_tokens", "completion_tokens", "tokens_out", "outputtokens", "completiontokens"]
+        )
+        let totalTokens = codexInt(
+            in: dict,
+            keyCandidates: ["total_tokens", "token_count", "usage_tokens", "total_token_count"]
+        )
+
+        if promptTokens != nil || completionTokens != nil || totalTokens != nil {
+            return CodexUsageSnapshot(
+                promptTokens: promptTokens,
+                completionTokens: completionTokens,
+                totalTokens: totalTokens
+            )
+        }
+    }
+    return nil
+}
+
+private func nestedCodexDictionary(in object: [String: Any], path: [String]) -> [String: Any]? {
+    var cursor: Any = object
+    for component in path {
+        guard let dict = cursor as? [String: Any] else {
+            return nil
+        }
+        let normalizedComponent = normalizeKey(component)
+        guard let next = dict.first(where: { normalizeKey($0.key) == normalizedComponent })?.value else {
+            return nil
+        }
+        cursor = next
+    }
+    return cursor as? [String: Any]
+}
+
+private func codexInt(in dict: [String: Any], keyCandidates: [String]) -> Int? {
+    for candidate in keyCandidates {
+        let normalizedCandidate = normalizeKey(candidate)
+        guard let value = dict.first(where: { normalizeKey($0.key) == normalizedCandidate })?.value else {
+            continue
+        }
+        if let intValue = asNonNegativeInt(value) {
+            return intValue
+        }
+    }
+    return nil
 }
 
 private struct FlatKeyValue {

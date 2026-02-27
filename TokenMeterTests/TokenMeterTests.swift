@@ -257,7 +257,7 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(points[1].model, "gpt-4.1")
         XCTAssertNil(points[1].promptTokens)
         XCTAssertNil(points[1].completionTokens)
-        XCTAssertEqual(points[1].totalTokens, 101)
+        XCTAssertNil(points[1].totalTokens)
         XCTAssertEqual(points[1].confidence, .low)
         XCTAssertEqual(points[1].parserVersion, CodexTrack2PrimaryParser.parserVersion)
     }
@@ -282,6 +282,32 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertNil(points[1].sessionId)
         XCTAssertEqual(points[1].model, "gpt-5.3-codex")
         XCTAssertEqual(points[1].totalTokens, 9)
+        XCTAssertEqual(points[1].confidence, .low)
+    }
+
+    func testCodexTrack2PrimaryParserPrefersLastTokenUsageAndSkipsDuplicateCumulativeSnapshots() {
+        let jsonl = """
+        {"timestamp":"2026-02-25T11:58:57.407Z","session_id":"sess_codex","model":"gpt-5.3-codex","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":14178,"cached_input_tokens":3456,"output_tokens":471,"reasoning_output_tokens":372,"total_tokens":14649},"last_token_usage":{"input_tokens":14178,"cached_input_tokens":3456,"output_tokens":471,"reasoning_output_tokens":372,"total_tokens":14649}}}}
+        {"timestamp":"2026-02-25T11:59:00.114Z","session_id":"sess_codex","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":14178,"cached_input_tokens":3456,"output_tokens":471,"reasoning_output_tokens":372,"total_tokens":14649},"last_token_usage":{"input_tokens":14178,"cached_input_tokens":3456,"output_tokens":471,"reasoning_output_tokens":372,"total_tokens":14649}}}}
+        {"timestamp":"2026-02-25T11:59:04.011Z","session_id":"sess_codex","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":28907,"cached_input_tokens":6912,"output_tokens":633,"reasoning_output_tokens":427,"total_tokens":29540},"last_token_usage":{"input_tokens":14729,"cached_input_tokens":3456,"output_tokens":162,"reasoning_output_tokens":55,"total_tokens":14891}}}}
+        """
+
+        let points = CodexTrack2PrimaryParser.timelinePoints(fromJSONL: jsonl, sourceFile: "sessions/duplicate-cumulative.jsonl")
+
+        XCTAssertEqual(points.count, 2)
+
+        XCTAssertEqual(points[0].sessionId, "sess_codex")
+        XCTAssertEqual(points[0].model, "gpt-5.3-codex")
+        XCTAssertEqual(points[0].promptTokens, 14178)
+        XCTAssertEqual(points[0].completionTokens, 471)
+        XCTAssertEqual(points[0].totalTokens, 14649)
+        XCTAssertEqual(points[0].confidence, .medium)
+
+        XCTAssertEqual(points[1].sessionId, "sess_codex")
+        XCTAssertEqual(points[1].model, "gpt-5.3-codex")
+        XCTAssertEqual(points[1].promptTokens, 14729)
+        XCTAssertEqual(points[1].completionTokens, 162)
+        XCTAssertEqual(points[1].totalTokens, 14891)
         XCTAssertEqual(points[1].confidence, .low)
     }
 
@@ -380,6 +406,35 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(points[1].sourceFile, "secondary_local:projects/drift/activity.jsonl")
         XCTAssertEqual(points[1].confidence, .low)
         XCTAssertEqual(points[1].parserVersion, ClaudeTrack2SecondaryParser.parserVersion)
+    }
+
+    func testClaudeTrack2SecondaryParserAggregatesCacheTokensAndDeduplicatesByRequestId() {
+        let jsonl = """
+        {"timestamp":"2026-01-12T10:01:46.930Z","sessionId":"sess_claude","message":{"model":"claude-opus-4-5-20251101","id":"msg_abc","usage":{"input_tokens":3,"cache_creation_input_tokens":20,"cache_read_input_tokens":100,"output_tokens":5}},"requestId":"req_same","type":"assistant"}
+        {"timestamp":"2026-01-12T10:01:49.461Z","sessionId":"sess_claude","message":{"model":"claude-opus-4-5-20251101","id":"msg_abc","usage":{"input_tokens":3,"cache_creation_input_tokens":20,"cache_read_input_tokens":100,"output_tokens":50}},"requestId":"req_same","type":"assistant"}
+        {"timestamp":"2026-01-12T10:02:10.000Z","sessionId":"sess_claude","message":{"model":"claude-opus-4-5-20251101","id":"msg_def","usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}},"requestId":"req_next","type":"assistant"}
+        """
+
+        let points = ClaudeTrack2SecondaryParser.timelinePoints(
+            fromJSONL: jsonl,
+            sourceFile: "projects/alpha/request-dedup.jsonl"
+        )
+
+        XCTAssertEqual(points.count, 2)
+
+        XCTAssertEqual(points[0].sessionId, "sess_claude")
+        XCTAssertEqual(points[0].model, "claude-opus-4-5-20251101")
+        XCTAssertEqual(points[0].promptTokens, 123)
+        XCTAssertEqual(points[0].completionTokens, 50)
+        XCTAssertEqual(points[0].totalTokens, 173)
+        XCTAssertEqual(points[0].confidence, .medium)
+
+        XCTAssertEqual(points[1].sessionId, "sess_claude")
+        XCTAssertEqual(points[1].model, "claude-opus-4-5-20251101")
+        XCTAssertEqual(points[1].promptTokens, 2)
+        XCTAssertEqual(points[1].completionTokens, 1)
+        XCTAssertEqual(points[1].totalTokens, 3)
+        XCTAssertEqual(points[1].confidence, .medium)
     }
 
     func testClaudeMethodBAdapterValidPayloadMapsSnapshot() throws {

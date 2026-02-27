@@ -27,6 +27,14 @@
 		65D61B25AF8FD0EC5F884C97 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 879BC152265A847F2BEE2940 /* Localizable.strings */; };
 		A1D9B9203E0D4F9BA1C45511 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 879BC152265A847F2BEE2940 /* Localizable.strings */; };
 		A1D9B9213E0D4F9BA1C45511 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = C664A6F8369B029F17506BC8 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293A /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7781 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293B /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7782 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293C /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7783 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293D /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7784 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4C /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7781 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4D /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7782 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4E /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7783 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4F /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7784 /* Localizable.strings */; };
 		665F8907AF684E0BEE829223 /* WidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D56B94B27E08BBB62D1038C3 /* WidgetSnapshotTests.swift */; };
 		6A5CD92C7E37E0184BC5870B /* WidgetSharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5CA6B991411F90718909EB /* WidgetSharedConfig.swift */; };
 		87FE7FBC55172985C552FC51 /* WidgetSharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C5968E3B32EC7767D8AEA00 /* WidgetSharedConfig.swift */; };
@@ -125,6 +133,10 @@
 		808815E4CD0EF32058321D8B /* TokenMeterWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TokenMeterWidget.swift; path = TokenMeterWidget/TokenMeterWidget.swift; sourceTree = "<group>"; };
 		84076AA21E1931C5A4D3BBC7 /* WidgetSnapshotRefresher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetSnapshotRefresher.swift; path = TokenMeter/Widget/WidgetSnapshotRefresher.swift; sourceTree = "<group>"; };
 		879BC152265A847F2BEE2940 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7781 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/es.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7782 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/ja.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7783 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/zh-Hans.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7784 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/zh-Hant.lproj/Localizable.strings; sourceTree = "<group>"; };
 		8954FDFF63542E7036DA83E2 /* ClaudeTrack1MethodCAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ClaudeTrack1MethodCAdapter.swift; path = TokenMeter/Providers/ClaudeTrack1MethodCAdapter.swift; sourceTree = "<group>"; };
 		8E9521C954D400746FB588B2 /* CLIToolDiscovery.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CLIToolDiscovery.swift; path = TokenMeter/ToolDiscovery/CLIToolDiscovery.swift; sourceTree = "<group>"; };
 		927E3727D3E0C962212BD720 /* WidgetSnapshotBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetSnapshotBuilder.swift; path = TokenMeter/Widget/WidgetSnapshotBuilder.swift; sourceTree = "<group>"; };
@@ -261,6 +273,10 @@
 				6639845A6DC0FE129410D313 /* WidgetSnapshotStore.swift */,
 				879BC152265A847F2BEE2940 /* Localizable.strings */,
 				C664A6F8369B029F17506BC8 /* Localizable.strings */,
+				9A11B22C33D44E55F66A7781 /* Localizable.strings */,
+				9A11B22C33D44E55F66A7782 /* Localizable.strings */,
+				9A11B22C33D44E55F66A7783 /* Localizable.strings */,
+				9A11B22C33D44E55F66A7784 /* Localizable.strings */,
 			);
 			name = TokenMeter;
 			sourceTree = "<group>";
@@ -404,6 +420,11 @@
 			knownRegions = (
 				en,
 				Base,
+				es,
+				ja,
+				ko,
+				"zh-Hans",
+				"zh-Hant",
 			);
 			mainGroup = 665FF189125CB6C85C1D73B5;
 			productRefGroup = 0DD7E7BB83D1218D5B5D5013 /* Products */;
@@ -438,6 +459,10 @@
 			files = (
 				65D61B25AF8FD0EC5F884C97 /* Localizable.strings in Resources */,
 				63BFBD388D20FE3D0E0B082A /* Localizable.strings in Resources */,
+				E7C1A1B2C3D4E5F60718293A /* Localizable.strings in Resources */,
+				E7C1A1B2C3D4E5F60718293B /* Localizable.strings in Resources */,
+				E7C1A1B2C3D4E5F60718293C /* Localizable.strings in Resources */,
+				E7C1A1B2C3D4E5F60718293D /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -447,6 +472,10 @@
 			files = (
 				A1D9B9203E0D4F9BA1C45511 /* Localizable.strings in Resources */,
 				A1D9B9213E0D4F9BA1C45511 /* Localizable.strings in Resources */,
+				F8D2B3C4D5E6F708192A3B4C /* Localizable.strings in Resources */,
+				F8D2B3C4D5E6F708192A3B4D /* Localizable.strings in Resources */,
+				F8D2B3C4D5E6F708192A3B4E /* Localizable.strings in Resources */,
+				F8D2B3C4D5E6F708192A3B4F /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

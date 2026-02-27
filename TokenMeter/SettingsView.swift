@@ -27,10 +27,11 @@ struct SettingsView: View {
             Section {
                 Picker("settings.locale.label", selection: localeSelection) {
                     Text("settings.locale.system").tag("system")
-                    Text("settings.locale.english").tag("en")
-                    Text("settings.locale.korean").tag("ko")
+                    ForEach(Self.supportedLocales, id: \.code) { locale in
+                        Text(verbatim: locale.displayName).tag(locale.code)
+                    }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .disabled(!didLoad)
             }
 
@@ -225,7 +226,7 @@ struct SettingsView: View {
                 case .system:
                     return "system"
                 case .fixed(let value):
-                    if value == "en" || value == "ko" { return value }
+                    if Self.supportedLocaleCodes.contains(value) { return value }
                     return "system"
                 }
             },
@@ -238,6 +239,17 @@ struct SettingsView: View {
             }
         )
     }
+
+    private static let supportedLocales: [(code: String, displayName: String)] = [
+        ("en", "English"),
+        ("ko", "한국어"),
+        ("ja", "日本語"),
+        ("zh-Hans", "简体中文"),
+        ("zh-Hant", "繁體中文"),
+        ("es", "Español"),
+    ]
+
+    private static let supportedLocaleCodes: Set<String> = Set(supportedLocales.map(\.code))
 
     private var claudeCLIPathOverrideText: Binding<String> {
         Binding(
