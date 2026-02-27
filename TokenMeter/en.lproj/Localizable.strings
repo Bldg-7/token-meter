@@ -51,6 +51,8 @@
 "content.widget_time_range.help" = "Keeps column density fixed and changes bucket size across the selected time window.";
 "content.widget_time_range.range" = "Range";
 "content.widget_time_range.title" = "Track 2 Widget Time Range";
+"menu.check_for_updates" = "Check for Updates…";
+"menu.version" = "Version";
 "menu.quit" = "Quit";
 "menu.time_range_option" = "Time range option";
 "menu.status.notCollecting" = "Not collecting yet";

@@ -1,18 +1,17 @@
-name: DMG Packaging
+name: GitHub Release Packaging
 
 on:
   push:
-    # Trigger on tag pushes like v1.2.3
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version string to embed in artifacts/metadata (defaults to ref name)"
-        required: false
+        description: "Release version/tag (eg: 1.2.3 or v1.2.3)."
+        required: true
         type: string
       channel:
-        description: "Release channel for metadata"
+        description: "Release channel"
         required: true
         type: choice
         options:
@@ -20,12 +19,66 @@ on:
           - prerelease
         default: stable
 
+permissions:
+  contents: write
+
 jobs:
-  dmg-packaging:
+  release:
     runs-on: macos-latest
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve release variables
+        id: vars
+        env:
+          INPUT_VERSION: "${{ inputs.version }}"
+          INPUT_CHANNEL: "${{ inputs.channel }}"
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${INPUT_VERSION:-}" ]]; then
+            TAG="$INPUT_VERSION"
+          fi
+
+          if [[ "$TAG" != v* ]]; then
+            TAG="v$TAG"
+          fi
+
+          VERSION="${TAG#v}"
+          CHANNEL="stable"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            CHANNEL="${INPUT_CHANNEL}"
+          elif [[ "$TAG" == *-* ]]; then
+            CHANNEL="prerelease"
+          fi
+
+          PRERELEASE="false"
+          if [[ "$CHANNEL" == "prerelease" ]]; then
+            PRERELEASE="true"
+          fi
+
+          DOWNLOAD_URL_PREFIX="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "download_url_prefix=${DOWNLOAD_URL_PREFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate required secrets
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
+            echo "Missing required secret: SPARKLE_PRIVATE_KEY" >&2
+            exit 1
+          fi
 
       - name: Build Xcode Project (Release)
         run: |
@@ -36,34 +89,31 @@ jobs:
             -configuration Release \
             -derivedDataPath build \
             -quiet
-        env:
-          DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
 
-      - name: Prepare packaging
+      - name: Prepare scripts
         run: |
           set -euo pipefail
           mkdir -p dist
           chmod +x scripts/packaging/dmg_packager.sh
           chmod +x scripts/packaging/update_metadata.sh
-        shell: bash
+          chmod +x scripts/packaging/sparkle_release_bundle.sh
 
-      - name: Create DMG artifact
+      - name: Build release bundle (DMG + Sparkle ZIP + appcast + metadata)
         env:
-          APP_BUNDLE_PATH: "./build/Build/Products/Release/TokenMeter.app"
-          OUTPUT_DIR: "./dist"
-          REF_NAME: "${{ github.ref_name }}"
-          EVENT_NAME: "${{ github.event_name }}"
-          INPUT_VERSION: "${{ inputs.version }}"
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          CHANNEL: ${{ steps.vars.outputs.channel }}
+          DOWNLOAD_URL_PREFIX: ${{ steps.vars.outputs.download_url_prefix }}
         run: |
           set -euo pipefail
-
-          VERSION_TAG="$REF_NAME"
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "${INPUT_VERSION:-}" ]]; then
-            VERSION_TAG="$INPUT_VERSION"
-          fi
-
-          ./scripts/packaging/dmg_packager.sh "$APP_BUNDLE_PATH" "$OUTPUT_DIR" "$VERSION_TAG"
-        shell: bash
+          ./scripts/packaging/sparkle_release_bundle.sh \
+            --app "./build/Build/Products/Release/TokenMeter.app" \
+            --output "./dist" \
+            --version "$VERSION" \
+            --channel "$CHANNEL" \
+            --download-url-prefix "$DOWNLOAD_URL_PREFIX" \
+            --derived-data-path "./build" \
+            --sparkle-private-key-env "SPARKLE_PRIVATE_KEY"
 
       - name: Sign DMG (optional)
         if: ${{ secrets.MACOS_CODESIGN_IDENTITY != '' }}
@@ -75,7 +125,6 @@ jobs:
           echo "[SIGN] Signing $DMG_PATH"
           codesign --force --sign "$CODESIGN_IDENTITY" --timestamp "$DMG_PATH"
           codesign --verify --verbose=2 "$DMG_PATH"
-        shell: bash
 
       - name: Notarize DMG (optional)
         if: ${{ secrets.NOTARYTOOL_KEYCHAIN_PROFILE != '' }}
@@ -87,36 +136,55 @@ jobs:
           echo "[NOTARY] Submitting $DMG_PATH"
           xcrun notarytool submit "$DMG_PATH" --wait --keychain-profile "$NOTARY_PROFILE"
           xcrun stapler staple "$DMG_PATH"
-        shell: bash
 
-      - name: Update metadata
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          PRERELEASE: ${{ steps.vars.outputs.prerelease }}
         run: |
           set -euo pipefail
 
-          REF_NAME="${{ github.ref_name }}"
-          EVENT_NAME="${{ github.event_name }}"
-          VERSION="$REF_NAME"
+          shopt -s nullglob
+          ASSETS=(
+            dist/*.dmg
+            dist/sparkle/*.zip
+            dist/appcast.xml
+            dist/metadata.json
+          )
+          shopt -u nullglob
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
+          if [[ "${#ASSETS[@]}" -eq 0 ]]; then
+            echo "No release assets found in dist/" >&2
+            exit 1
           fi
 
-          CHANNEL="stable"
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            CHANNEL="${{ inputs.channel }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "[RELEASE] Updating existing release $TAG"
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            if [[ "$REF_NAME" == *-* ]]; then
-              CHANNEL="prerelease"
+            echo "[RELEASE] Creating new release $TAG"
+            CREATE_ARGS=(
+              "$TAG"
+              "${ASSETS[@]}"
+              --title "TokenMeter ${VERSION}"
+              --notes "Automated release for ${TAG}"
+            )
+            if [[ "$PRERELEASE" == "true" ]]; then
+              CREATE_ARGS+=(--prerelease)
             fi
+            gh release create "${CREATE_ARGS[@]}"
           fi
 
-          ./scripts/packaging/update_metadata.sh --version "$VERSION" --channel "$CHANNEL" --output dist/metadata.json
-        shell: bash
-
-      - name: Upload DMG artifact (optional)
+      - name: Upload workflow artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: TokenMeter-DMG
-          path: dist/*.dmg
+          name: TokenMeter-Release-Bundle
+          path: |
+            dist/*.dmg
+            dist/sparkle/*.zip
+            dist/appcast.xml
+            dist/metadata.json
           if-no-files-found: error

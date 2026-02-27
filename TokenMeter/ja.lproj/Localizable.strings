@@ -51,6 +51,8 @@
 "content.widget_time_range.help" = "列密度を固定したまま、選択した時間ウィンドウに応じてバケットサイズを変更します。";
 "content.widget_time_range.range" = "範囲";
 "content.widget_time_range.title" = "Track 2 ウィジェット時間範囲";
+"menu.check_for_updates" = "アップデートを確認…";
+"menu.version" = "バージョン";
 "menu.quit" = "終了";
 "menu.time_range_option" = "時間範囲オプション";
 "menu.status.notCollecting" = "まだ収集していません";

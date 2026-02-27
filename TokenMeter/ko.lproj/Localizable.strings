@@ -51,6 +51,8 @@
 "content.widget_time_range.help" = "컬럼 밀도를 고정하고 선택한 시간 창에 맞춰 버킷 크기를 변경합니다.";
 "content.widget_time_range.range" = "범위";
 "content.widget_time_range.title" = "Track 2 위젯 시간 범위";
+"menu.check_for_updates" = "업데이트 확인…";
+"menu.version" = "버전";
 "menu.quit" = "종료";
 "menu.time_range_option" = "시간 범위 옵션";
 "menu.status.notCollecting" = "아직 수집하지 않음";

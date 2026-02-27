@@ -13,6 +13,7 @@
 		24F89B985EC49FE409F9CEE9 /* track2_codex_primary_drift.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = F2B2C5985F3223610B81FB50 /* track2_codex_primary_drift.jsonl */; };
 		251DBB82BDB4B95621267B31 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 761DA1DA6F935EBF57CD2607 /* Cocoa.framework */; };
 		29EAD80F659A74CED66F92D4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 761DA1DA6F935EBF57CD2607 /* Cocoa.framework */; };
+		C1A8F002B3E14E4D9FA10001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C1A8F003B3E14E4D9FA10002 /* Sparkle */; };
 		2C3B780EB24B733C9A590BED /* DiagnosticsValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5FCCA1A50879D6820F070EF /* DiagnosticsValue.swift */; };
 		B1C2D3E4F5061728394A5B6C /* Track2ModelClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* Track2ModelClassifier.swift */; };
 		30A82F6325C9624924A61ED5 /* TrackModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3046F02C11C477E5058A7795 /* TrackModels.swift */; };
@@ -167,6 +168,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C1A8F002B3E14E4D9FA10001 /* Sparkle in Frameworks */,
 				29EAD80F659A74CED66F92D4 /* Cocoa.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -366,6 +368,9 @@
 				30DF4860E6A418D6306E024E /* PBXTargetDependency */,
 			);
 			name = TokenMeter;
+			packageProductDependencies = (
+				C1A8F003B3E14E4D9FA10002 /* Sparkle */,
+			);
 			productName = TokenMeter;
 			productReference = 60375AA9C016BF2C8CDECACA /* TokenMeter.app */;
 			productType = "com.apple.product-type.application";
@@ -427,6 +432,9 @@
 				"zh-Hant",
 			);
 			mainGroup = 665FF189125CB6C85C1D73B5;
+			packageReferences = (
+				C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			productRefGroup = 0DD7E7BB83D1218D5B5D5013 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -575,6 +583,17 @@
 			targetProxy = 4BCBB4BF5CF23C1A5B1BB05B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCBuildConfiguration section */
 		00CFCF3EC08B60D9E1E49458 /* Debug */ = {
@@ -812,6 +831,14 @@
 			name = Debug;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C1A8F003B3E14E4D9FA10002 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCConfigurationList section */
 		522A2B337B1963C49E8D0E4B /* Build configuration list for PBXNativeTarget "TokenMeterTests" */ = {

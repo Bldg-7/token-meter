@@ -1,4 +1,5 @@
 import Foundation
+import Sparkle
 import SwiftUI
 import WidgetKit
 
@@ -6,10 +7,11 @@ import WidgetKit
 struct TokenMeterApp: App {
     @StateObject private var runtime = AppRuntime()
     @StateObject private var appLocale = AppLocaleController()
+    @StateObject private var sparkleUpdater = SparkleUpdaterService()
 
     var body: some Scene {
         MenuBarExtra("app.title", systemImage: "gauge") {
-            MenuBarMenuView()
+            MenuBarMenuView(updater: sparkleUpdater)
                 .environment(\.locale, appLocale.swiftUILocale)
         }
         .menuBarExtraStyle(.menu)
@@ -22,6 +24,7 @@ struct TokenMeterApp: App {
 }
 
 private struct MenuBarMenuView: View {
+    let updater: SparkleUpdaterService
     @State private var selectedScale: Track2WidgetTimeScale = .hours24
 
     var body: some View {
@@ -40,6 +43,19 @@ private struct MenuBarMenuView: View {
                 }
             }
         }
+
+        Divider()
+
+        if updater.hasUpdateAvailable {
+            Button("menu.check_for_updates") {
+                updater.checkForUpdates()
+            }
+
+            Divider()
+        }
+
+        (Text("menu.version") + Text(" \(updater.currentVersion)"))
+            .foregroundStyle(.secondary)
 
         Divider()
 
@@ -76,6 +92,74 @@ private struct MenuBarMenuView: View {
             }
         } catch {
         }
+    }
+}
+
+@MainActor
+final class SparkleUpdaterService: NSObject, ObservableObject, SPUUpdaterDelegate {
+    @Published private(set) var hasUpdateAvailable = false
+    @Published private(set) var canCheckForUpdates = false
+    let currentVersion: String
+
+    private lazy var controller: SPUStandardUpdaterController = {
+        SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: self,
+            userDriverDelegate: nil
+        )
+    }()
+    private var canCheckObservation: NSKeyValueObservation?
+    private var hasProbedForUpdate = false
+
+    override init() {
+        currentVersion = Self.makeCurrentVersionString()
+        super.init()
+        _ = controller
+        bindCanCheckState()
+        probeForUpdateIfPossible()
+    }
+
+    func checkForUpdates() {
+        controller.checkForUpdates(nil)
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        hasUpdateAvailable = true
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        hasUpdateAvailable = false
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+        hasUpdateAvailable = false
+    }
+
+    private func bindCanCheckState() {
+        canCheckObservation = controller.updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.canCheckForUpdates = self.controller.updater.canCheckForUpdates
+                self.probeForUpdateIfPossible()
+            }
+        }
+    }
+
+    private func probeForUpdateIfPossible() {
+        guard !hasProbedForUpdate else { return }
+        guard controller.updater.canCheckForUpdates else { return }
+        hasProbedForUpdate = true
+        controller.updater.checkForUpdateInformation()
+    }
+
+    private static func makeCurrentVersionString(bundle: Bundle = .main) -> String {
+        let shortVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !shortVersion.isEmpty {
+            return shortVersion
+        }
+
+        let buildVersion = (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return buildVersion.isEmpty ? "n/a" : buildVersion
     }
 }
 

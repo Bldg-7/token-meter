@@ -16,6 +16,7 @@ vendor/bundle/
 
 # Xcode user-specific data
 TokenMeter.xcodeproj/xcuserdata/
+TokenMeter.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcuserstate
 
 # Test artifacts

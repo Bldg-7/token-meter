@@ -51,6 +51,8 @@
 "content.widget_time_range.help" = "保持列密度不变，并根据所选时间窗口调整桶大小。";
 "content.widget_time_range.range" = "范围";
 "content.widget_time_range.title" = "Track 2 小组件时间范围";
+"menu.check_for_updates" = "检查更新…";
+"menu.version" = "版本";
 "menu.quit" = "退出";
 "menu.time_range_option" = "时间范围选项";
 "menu.status.notCollecting" = "尚未开始采集";

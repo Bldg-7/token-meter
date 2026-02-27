@@ -51,6 +51,8 @@
 "content.widget_time_range.help" = "Mantiene fija la densidad de columnas y cambia el tamaño de bucket según la ventana de tiempo seleccionada.";
 "content.widget_time_range.range" = "Rango";
 "content.widget_time_range.title" = "Rango de tiempo del widget de Track 2";
+"menu.check_for_updates" = "Buscar actualizaciones…";
+"menu.version" = "Versión";
 "menu.quit" = "Salir";
 "menu.time_range_option" = "Opción de rango de tiempo";
 "menu.status.notCollecting" = "Aún no está recopilando";

@@ -51,6 +51,8 @@
 "content.widget_time_range.help" = "維持欄位密度固定，並依所選時間視窗調整桶大小。";
 "content.widget_time_range.range" = "範圍";
 "content.widget_time_range.title" = "Track 2 小工具時間範圍";
+"menu.check_for_updates" = "檢查更新…";
+"menu.version" = "版本";
 "menu.quit" = "結束";
 "menu.time_range_option" = "時間範圍選項";
 "menu.status.notCollecting" = "尚未開始收集";
