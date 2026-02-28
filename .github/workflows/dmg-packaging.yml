@@ -116,7 +116,7 @@ jobs:
             --sparkle-private-key-env "SPARKLE_PRIVATE_KEY"
 
       - name: Sign DMG (optional)
-        if: ${{ secrets.MACOS_CODESIGN_IDENTITY != '' }}
+        if: ${{ env.CODESIGN_IDENTITY != '' }}
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
         run: |
@@ -127,7 +127,7 @@ jobs:
           codesign --verify --verbose=2 "$DMG_PATH"
 
       - name: Notarize DMG (optional)
-        if: ${{ secrets.NOTARYTOOL_KEYCHAIN_PROFILE != '' }}
+        if: ${{ env.NOTARY_PROFILE != '' }}
         env:
           NOTARY_PROFILE: ${{ secrets.NOTARYTOOL_KEYCHAIN_PROFILE }}
         run: |
