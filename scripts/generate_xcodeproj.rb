@@ -127,6 +127,7 @@ if File.directory?(icon_path)
   app_target.resources_build_phase.add_file_reference(icon_ref)
 end
 add_sources(project: project, target: widget_target, group: widget_sources_group, glob: "#{APP_NAME}Widget/*.swift")
+add_resources(target: widget_target, group: widget_sources_group, glob: "#{APP_NAME}/*.lproj/*.strings")
 add_specific_sources(
   target: widget_target,
   group: widget_sources_group,
