@@ -10,7 +10,7 @@ struct TokenMeterApp: App {
     @StateObject private var sparkleUpdater = SparkleUpdaterService()
 
     var body: some Scene {
-        MenuBarExtra("app.title", systemImage: "gauge") {
+        MenuBarExtra("app.title", image: "StatusBarIcon") {
             MenuBarMenuView(updater: sparkleUpdater)
                 .environment(\.locale, appLocale.swiftUILocale)
         }

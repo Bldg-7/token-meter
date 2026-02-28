@@ -94,6 +94,12 @@ end
 
 add_sources(project: project, target: app_target, group: app_sources_group, glob: "#{APP_NAME}/**/*.swift")
 add_resources(target: app_target, group: app_sources_group, glob: "#{APP_NAME}/*.lproj/*.strings")
+
+assets_path = "#{APP_NAME}/Assets.xcassets"
+if File.directory?(assets_path)
+  assets_ref = app_sources_group.new_file(assets_path)
+  app_target.resources_build_phase.add_file_reference(assets_ref)
+end
 add_sources(project: project, target: widget_target, group: widget_sources_group, glob: "#{APP_NAME}Widget/*.swift")
 add_specific_sources(
   target: widget_target,
