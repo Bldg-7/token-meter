@@ -62,7 +62,7 @@ jobs:
             PRERELEASE="true"
           fi
 
-          DOWNLOAD_URL_PREFIX="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          DOWNLOAD_URL_PREFIX="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/"
 
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -79,6 +79,17 @@ jobs:
             echo "Missing required secret: SPARKLE_PRIVATE_KEY" >&2
             exit 1
           fi
+
+      - name: Stamp version into Info.plist
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          set -euo pipefail
+          PLIST="TokenMeter/Info.plist"
+          BUILD_NUMBER="$(date -u +%Y%m%d%H%M%S)"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
+          plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$PLIST"
+          echo "[VERSION] CFBundleShortVersionString=$VERSION  CFBundleVersion=$BUILD_NUMBER"
 
       - name: Build Xcode Project (Release)
         run: |
