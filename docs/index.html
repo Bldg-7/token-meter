@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TokenMeter</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #b0b0b0;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 40px 20px;
+    min-height: 100vh;
+  }
+  .terminal {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .prompt { color: #5af78e; }
+  .cmd { color: #e8e8e8; }
+  .flag { color: #57c7ff; }
+  .comment { color: #555; }
+  .output { color: #b0b0b0; margin-bottom: 24px; }
+  .highlight { color: #f3f99d; }
+  .error { color: #ff5c57; }
+  .link { color: #57c7ff; text-decoration: none; }
+  .link:hover { text-decoration: underline; }
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background: #5af78e;
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+  .line { margin-bottom: 2px; }
+  .section { margin-bottom: 28px; }
+  .bar { color: #555; }
+  .ascii {
+    color: #5af78e;
+    margin-bottom: 24px;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+  .tui-box {
+    border: 1px solid #555;
+    padding: 16px 20px;
+    position: relative;
+    margin-top: 8px;
+  }
+  .tui-title {
+    position: absolute;
+    top: -10px;
+    left: 12px;
+    background: #0a0a0a;
+    padding: 0 8px;
+    color: #57c7ff;
+    font-weight: bold;
+  }
+  .tui-lang {
+    position: absolute;
+    top: -10px;
+    right: 12px;
+    background: #0a0a0a;
+    padding: 0 4px;
+    font-size: 13px;
+  }
+  .tui-lang span {
+    cursor: pointer;
+    padding: 0 6px;
+    color: #555;
+  }
+  .tui-lang span.active {
+    color: #5af78e;
+  }
+  .tui-lang span:hover:not(.active):not(.bar) {
+    color: #b0b0b0;
+  }
+  .tui-lang .bar {
+    cursor: default;
+  }
+  .lang-content { display: none; }
+  .lang-content.active { display: block; }
+  .tui-content {
+    line-height: 1.8;
+  }
+  .dl-btn {
+    display: inline-block;
+    color: #0a0a0a;
+    background: #5af78e;
+    padding: 8px 20px;
+    text-decoration: none;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: bold;
+    margin-top: 8px;
+  }
+  .dl-btn:hover {
+    background: #f3f99d;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+<div class="terminal">
+
+<pre class="ascii">
+ _____     _            __  __      _
+|_   _|__ | | _____ _ _|  \/  |___| |_ ___ _ _
+  | |/ _ \| |/ / -_) ' \ |\/| / -_)  _/ -_) '_|
+  |_|\___/|_\_\___|_||_|_|  |_\___|\__\___|_|
+</pre>
+
+<div class="section">
+<div class="line"><span class="prompt">$</span> <span class="cmd">cat</span> <span class="flag">README</span></div>
+<div class="output">
+<div class="tui-box">
+<div class="tui-title">README</div>
+<div class="tui-lang"><span class="active" onclick="switchLang('en')">EN</span><span class="bar">|</span><span onclick="switchLang('ko')">KO</span><span class="bar">|</span><span onclick="switchLang('ja')">JA</span><span class="bar">|</span><span onclick="switchLang('zh-cn')">CN</span><span class="bar">|</span><span onclick="switchLang('zh-tw')">TW</span><span class="bar">|</span><span onclick="switchLang('es')">ES</span></div>
+<div class="tui-content">
+<div id="lang-en" class="lang-content active">
+<span class="highlight">TokenMeter</span> — macOS widget for AI coding tools<br><br>
+Keep your <span class="highlight">Codex</span> and <span class="highlight">Claude Code</span> usage visible<br>
+on your desktop with native macOS widgets.<br><br>
+<span class="cmd">What it does:</span><br><br>
+<span class="prompt"> ></span> Widgets showing rate limits and remaining quota at a glance<br>
+<span class="prompt"> ></span> Tracks local token consumption over time<br>
+<span class="prompt"> ></span> Monitors multiple providers side by side<br>
+<span class="prompt"> ></span> Shows your current plan and reset timing<br><br>
+<span class="comment">Usage data stays local. No external telemetry.</span>
+</div>
+<div id="lang-ko" class="lang-content">
+<span class="highlight">TokenMeter</span> — AI 코딩 도구를 위한 macOS 위젯<br><br>
+<span class="highlight">Codex</span>와 <span class="highlight">Claude Code</span>의 사용량을<br>
+macOS 위젯으로 바탕화면에서 바로 확인하세요.<br><br>
+<span class="cmd">주요 기능:</span><br><br>
+<span class="prompt"> ></span> 플랜별 사용 한도와 남은 사용량을 위젯으로 표시<br>
+<span class="prompt"> ></span> 로컬 토큰 사용량을 시간별로 추적<br>
+<span class="prompt"> ></span> 여러 프로바이더를 한눈에 모니터링<br>
+<span class="prompt"> ></span> 현재 플랜과 리셋 시점 표시<br><br>
+<span class="comment">사용 데이터는 로컬에만 저장됩니다. 외부 전송 없음.</span>
+</div>
+<div id="lang-ja" class="lang-content">
+<span class="highlight">TokenMeter</span> — AIコーディングツール向けmacOSウィジェット<br><br>
+<span class="highlight">Codex</span>と<span class="highlight">Claude Code</span>の使用量を<br>
+macOSウィジェットでデスクトップから直接確認できます。<br><br>
+<span class="cmd">主な機能:</span><br><br>
+<span class="prompt"> ></span> プランの使用上限と残量をウィジェットで表示<br>
+<span class="prompt"> ></span> ローカルのトークン消費量を時系列で追跡<br>
+<span class="prompt"> ></span> 複数のプロバイダーを一目でモニタリング<br>
+<span class="prompt"> ></span> 現在のプランとリセット時刻を表示<br><br>
+<span class="comment">使用データはローカルにのみ保存されます。外部送信なし。</span>
+</div>
+<div id="lang-zh-cn" class="lang-content">
+<span class="highlight">TokenMeter</span> — AI编程工具的macOS小组件<br><br>
+通过macOS小组件在桌面上直接查看<br>
+<span class="highlight">Codex</span>和<span class="highlight">Claude Code</span>的使用情况。<br><br>
+<span class="cmd">主要功能:</span><br><br>
+<span class="prompt"> ></span> 通过小组件显示计划用量上限和剩余额度<br>
+<span class="prompt"> ></span> 按时间追踪本地Token消耗量<br>
+<span class="prompt"> ></span> 同时监控多个供应商的使用情况<br>
+<span class="prompt"> ></span> 显示当前计划和重置时间<br><br>
+<span class="comment">使用数据仅保存在本地，不会外传。</span>
+</div>
+<div id="lang-zh-tw" class="lang-content">
+<span class="highlight">TokenMeter</span> — AI程式開發工具的macOS小工具<br><br>
+透過macOS小工具在桌面上直接查看<br>
+<span class="highlight">Codex</span>和<span class="highlight">Claude Code</span>的使用狀況。<br><br>
+<span class="cmd">主要功能:</span><br><br>
+<span class="prompt"> ></span> 透過小工具顯示方案用量上限和剩餘額度<br>
+<span class="prompt"> ></span> 按時間追蹤本地Token消耗量<br>
+<span class="prompt"> ></span> 同時監控多個供應商的使用狀況<br>
+<span class="prompt"> ></span> 顯示目前方案和重置時間<br><br>
+<span class="comment">使用資料僅儲存在本地，不會外傳。</span>
+</div>
+<div id="lang-es" class="lang-content">
+<span class="highlight">TokenMeter</span> — widget de macOS para herramientas de programacion con IA<br><br>
+Visualiza el uso de <span class="highlight">Codex</span> y <span class="highlight">Claude Code</span><br>
+directamente en tu escritorio con widgets nativos de macOS.<br><br>
+<span class="cmd">Que hace:</span><br><br>
+<span class="prompt"> ></span> Widgets que muestran limites de uso y cuota restante<br>
+<span class="prompt"> ></span> Rastrea el consumo local de tokens a lo largo del tiempo<br>
+<span class="prompt"> ></span> Monitorea multiples proveedores en paralelo<br>
+<span class="prompt"> ></span> Muestra tu plan actual y el tiempo de reinicio<br><br>
+<span class="comment">Los datos de uso se guardan localmente. Sin telemetria externa.</span>
+</div>
+</div>
+</div>
+<br>
+<a class="dl-btn" href="https://github.com/Bldg-7/token-meter/releases/latest">Download Latest DMG</a>
+</div>
+</div>
+
+<div class="section">
+<div class="line"><span class="prompt">$</span> <span class="cmd">tokenmeter</span> <span class="flag">--providers</span></div>
+<div class="output">
+<div class="line"> <span class="cmd">codex</span>  <span class="bar">---</span> usage snapshots + local token history</div>
+<div class="line"> <span class="cmd">claude</span> <span class="bar">---</span> usage snapshots + local token history</div>
+</div>
+</div>
+
+<div class="section">
+<div class="line"><span class="prompt">$</span> <span class="cmd">tokenmeter</span> <span class="flag">--install</span></div>
+<div class="output">
+<div class="line"><span class="comment"># Download latest release</span></div>
+<div class="line"><span class="prompt">$</span> <span class="cmd">curl</span> <span class="flag">-LO</span> <a class="link" href="https://github.com/Bldg-7/token-meter/releases/latest">https://github.com/Bldg-7/token-meter/releases/latest</a></div>
+<div class="line"><span class="prompt">$</span> <span class="cmd">open</span> TokenMeter-*.dmg</div>
+<div class="line"><span class="prompt">$</span> <span class="cmd">cp</span> <span class="flag">-r</span> TokenMeter.app /Applications/</div>
+</div>
+</div>
+
+<div class="section">
+<div class="line"><span class="prompt">$</span> <span class="cmd">tokenmeter</span> <span class="flag">--requires</span></div>
+<div class="output">
+<div class="line">os    <span class="bar">|</span> macOS 13.0+</div>
+<div class="line">arch  <span class="bar">|</span> Apple Silicon / Intel</div>
+<div class="line">price <span class="bar">|</span> <span class="highlight">free &amp; open source</span></div>
+</div>
+</div>
+
+<div class="section">
+<div class="line"><span class="prompt">$</span> <span class="cmd">tokenmeter</span> <span class="flag">--links</span></div>
+<div class="output">
+<div class="line">source   <span class="bar">|</span> <a class="link" href="https://github.com/Bldg-7/token-meter">github.com/Bldg-7/token-meter</a></div>
+<div class="line">releases <span class="bar">|</span> <a class="link" href="https://github.com/Bldg-7/token-meter/releases">github.com/Bldg-7/token-meter/releases</a></div>
+</div>
+</div>
+
+<div class="line"><span class="prompt">$</span> <span class="cursor"></span></div>
+
+</div>
+<script>
+function switchLang(lang) {
+  document.querySelectorAll('.lang-content').forEach(function(el) { el.classList.remove('active'); });
+  document.getElementById('lang-' + lang).classList.add('active');
+  document.querySelectorAll('.tui-lang span').forEach(function(el) { el.classList.remove('active'); });
+  document.querySelector('.tui-lang span[onclick="switchLang(\'' + lang + '\')"]').classList.add('active');
+}
+</script>
+</body>
+</html>

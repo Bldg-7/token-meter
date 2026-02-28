@@ -17,8 +17,8 @@
   <key>SUEnableAutomaticChecks</key>
   <true/>
   <key>SUFeedURL</key>
-  <string>https://example.com/appcast.xml</string>
+  <string>https://github.com/Bldg-7/token-meter/releases/latest/download/appcast.xml</string>
   <key>SUPublicEDKey</key>
-  <string>REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY</string>
+  <string>od/2Tl+RlLkjf+shLwNNqqDsu9mlWIhullASntz0mOc=</string>
 </dict>
 </plist>
