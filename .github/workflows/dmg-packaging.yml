@@ -88,6 +88,9 @@ jobs:
             -scheme TokenMeter \
             -configuration Release \
             -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
             -quiet
 
       - name: Prepare scripts
