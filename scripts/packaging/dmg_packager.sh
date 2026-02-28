@@ -85,4 +85,8 @@ hdiutil create \
   -ov \
   "$OUTPUT_PATH"
 
+STABLE_PATH="$OUTPUT_DIR/TokenMeter.dmg"
+cp "$OUTPUT_PATH" "$STABLE_PATH"
+
 echo "[DMG] Created $OUTPUT_PATH"
+echo "[DMG] Copied  $STABLE_PATH"
