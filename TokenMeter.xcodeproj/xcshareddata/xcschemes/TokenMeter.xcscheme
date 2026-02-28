@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5EC371412F6DEE67CE6132A6"
+               BlueprintIdentifier = "0F41F33A54B8757CAA1A26CA"
                BuildableName = "TokenMeter.app"
                BlueprintName = "TokenMeter"
                ReferencedContainer = "container:TokenMeter.xcodeproj">
@@ -32,7 +32,7 @@
              skipped = "NO">
              <BuildableReference
                 BuildableIdentifier = "primary"
-                BlueprintIdentifier = "D05F004EDE58D5669C512CAD"
+                BlueprintIdentifier = "4719D69C4DF577A3679050D9"
                 BuildableName = "TokenMeterTests.xctest"
                 BlueprintName = "TokenMeterTests"
                 ReferencedContainer = "container:TokenMeter.xcodeproj">
@@ -53,7 +53,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "5EC371412F6DEE67CE6132A6"
+            BlueprintIdentifier = "0F41F33A54B8757CAA1A26CA"
             BuildableName = "TokenMeter.app"
             BlueprintName = "TokenMeter"
             ReferencedContainer = "container:TokenMeter.xcodeproj">
@@ -70,7 +70,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "5EC371412F6DEE67CE6132A6"
+            BlueprintIdentifier = "0F41F33A54B8757CAA1A26CA"
             BuildableName = "TokenMeter.app"
             BlueprintName = "TokenMeter"
             ReferencedContainer = "container:TokenMeter.xcodeproj">
