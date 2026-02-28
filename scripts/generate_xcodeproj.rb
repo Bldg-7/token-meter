@@ -27,6 +27,7 @@ app_target.build_configurations.each do |config|
   config.build_settings["SWIFT_VERSION"] = "6.0"
   config.build_settings["CODE_SIGN_STYLE"] = "Automatic"
   config.build_settings["CODE_SIGNING_ALLOWED"] = "YES"
+  config.build_settings["DEVELOPMENT_TEAM"] = "SYZS4D43Z6"
   config.build_settings["INFOPLIST_FILE"] = "#{APP_NAME}/Info.plist"
   config.build_settings["CODE_SIGN_ENTITLEMENTS"] = "#{APP_NAME}/#{APP_NAME}.entitlements"
 end
@@ -37,6 +38,7 @@ widget_target.build_configurations.each do |config|
   config.build_settings["SWIFT_VERSION"] = "6.0"
   config.build_settings["CODE_SIGN_STYLE"] = "Automatic"
   config.build_settings["CODE_SIGNING_ALLOWED"] = "YES"
+  config.build_settings["DEVELOPMENT_TEAM"] = "SYZS4D43Z6"
   config.build_settings["INFOPLIST_FILE"] = "#{APP_NAME}Widget/Info.plist"
   config.build_settings["CODE_SIGN_ENTITLEMENTS"] = "#{APP_NAME}Widget/#{APP_NAME}Widget.entitlements"
   config.build_settings["APPLICATION_EXTENSION_API_ONLY"] = "YES"
