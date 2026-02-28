@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 46;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -13,9 +13,7 @@
 		24F89B985EC49FE409F9CEE9 /* track2_codex_primary_drift.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = F2B2C5985F3223610B81FB50 /* track2_codex_primary_drift.jsonl */; };
 		251DBB82BDB4B95621267B31 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 761DA1DA6F935EBF57CD2607 /* Cocoa.framework */; };
 		29EAD80F659A74CED66F92D4 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 761DA1DA6F935EBF57CD2607 /* Cocoa.framework */; };
-		C1A8F002B3E14E4D9FA10001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C1A8F003B3E14E4D9FA10002 /* Sparkle */; };
 		2C3B780EB24B733C9A590BED /* DiagnosticsValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5FCCA1A50879D6820F070EF /* DiagnosticsValue.swift */; };
-		B1C2D3E4F5061728394A5B6C /* Track2ModelClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* Track2ModelClassifier.swift */; };
 		30A82F6325C9624924A61ED5 /* TrackModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3046F02C11C477E5058A7795 /* TrackModels.swift */; };
 		3421E6DB2BDC464F0415E3BB /* ClaudeTrack1Adapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7C587B862738BC74328BEE /* ClaudeTrack1Adapter.swift */; };
 		343208EC7E5B2B4B765B61BD /* TokenMeterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 286076AD23E1987F230E318A /* TokenMeterApp.swift */; };
@@ -26,16 +24,6 @@
 		63BFBD388D20FE3D0E0B082A /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = C664A6F8369B029F17506BC8 /* Localizable.strings */; };
 		65B9727E04051907D30D0883 /* Track1Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FABB597B77D055343A738A5 /* Track1Store.swift */; };
 		65D61B25AF8FD0EC5F884C97 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 879BC152265A847F2BEE2940 /* Localizable.strings */; };
-		A1D9B9203E0D4F9BA1C45511 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 879BC152265A847F2BEE2940 /* Localizable.strings */; };
-		A1D9B9213E0D4F9BA1C45511 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = C664A6F8369B029F17506BC8 /* Localizable.strings */; };
-		E7C1A1B2C3D4E5F60718293A /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7781 /* Localizable.strings */; };
-		E7C1A1B2C3D4E5F60718293B /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7782 /* Localizable.strings */; };
-		E7C1A1B2C3D4E5F60718293C /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7783 /* Localizable.strings */; };
-		E7C1A1B2C3D4E5F60718293D /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7784 /* Localizable.strings */; };
-		F8D2B3C4D5E6F708192A3B4C /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7781 /* Localizable.strings */; };
-		F8D2B3C4D5E6F708192A3B4D /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7782 /* Localizable.strings */; };
-		F8D2B3C4D5E6F708192A3B4E /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7783 /* Localizable.strings */; };
-		F8D2B3C4D5E6F708192A3B4F /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7784 /* Localizable.strings */; };
 		665F8907AF684E0BEE829223 /* WidgetSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D56B94B27E08BBB62D1038C3 /* WidgetSnapshotTests.swift */; };
 		6A5CD92C7E37E0184BC5870B /* WidgetSharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5CA6B991411F90718909EB /* WidgetSharedConfig.swift */; };
 		87FE7FBC55172985C552FC51 /* WidgetSharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C5968E3B32EC7767D8AEA00 /* WidgetSharedConfig.swift */; };
@@ -44,13 +32,18 @@
 		908A7631273C32804EDE3653 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2024A4465470794CB52633A2 /* ContentView.swift */; };
 		92083C8C2914309A6A27583F /* WidgetSnapshotDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A858574348D5CF0CDBAF87D0 /* WidgetSnapshotDTO.swift */; };
 		972CC199F1DA1CF39EE348CA /* CollectionOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71F96A08ED2327CE9D773731 /* CollectionOrchestrator.swift */; };
+		9B78B1AC2F52EAFC004305D0 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 9B78B1AB2F52EAFC004305D0 /* AppIcon.icon */; };
+		A1D9B9203E0D4F9BA1C45511 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 879BC152265A847F2BEE2940 /* Localizable.strings */; };
+		A1D9B9213E0D4F9BA1C45511 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = C664A6F8369B029F17506BC8 /* Localizable.strings */; };
 		A58E9F6855FC15689534DBC1 /* DiagnosticsLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A109847A1B958503BFF4209 /* DiagnosticsLogger.swift */; };
 		ACC7C887C4792110B2B00784 /* track2_claude_secondary_drift.jsonl in Resources */ = {isa = PBXBuildFile; fileRef = B8FBF2031640D3A8D785956C /* track2_claude_secondary_drift.jsonl */; };
 		AD762D02934A2D09DCDCA2B0 /* Track2Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931B79629090674EA04F6201 /* Track2Store.swift */; };
 		B07E2CB03A62EEA86EFA9C7B /* WidgetSnapshotBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 927E3727D3E0C962212BD720 /* WidgetSnapshotBuilder.swift */; };
+		B1C2D3E4F5061728394A5B6C /* Track2ModelClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* Track2ModelClassifier.swift */; };
 		B3A7547EFCF03D3590A042EE /* DiagnosticsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D2D18F6882C2E36DDA457B6 /* DiagnosticsStore.swift */; };
 		B479DFE97D885B5B9CA80F25 /* WidgetSnapshotRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84076AA21E1931C5A4D3BBC7 /* WidgetSnapshotRefresher.swift */; };
 		B9668116654EAB7C8EF6E032 /* TokenMeterUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5117BA4018C294B172E10E06 /* TokenMeterUITests.swift */; };
+		C1A8F002B3E14E4D9FA10001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C1A8F003B3E14E4D9FA10002 /* Sparkle */; };
 		C83BBBC02071F906E7DAC331 /* track1_claude_methodc_drift.json in Resources */ = {isa = PBXBuildFile; fileRef = D2885DAA840D10F70A22C2EE /* track1_claude_methodc_drift.json */; };
 		CD3AB33BE9DC0E4729D01E28 /* CLIToolDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9521C954D400746FB588B2 /* CLIToolDiscovery.swift */; };
 		CDF430FD51DEDEBFC1149167 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27779FF29310908617B2C4D7 /* AppSettings.swift */; };
@@ -62,11 +55,19 @@
 		D7F5BD2BDABE6E7D3BD786EE /* track1_codex_methodb_drift.json in Resources */ = {isa = PBXBuildFile; fileRef = B1AFEDDB44FA2EF7467BE386 /* track1_codex_methodb_drift.json */; };
 		D92A2A7345C1F287B52D3E12 /* DiagnosticsRedactor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC11F0AFBE1B74600767D07 /* DiagnosticsRedactor.swift */; };
 		DFC5FBD13E32123069A232DA /* TokenMeterWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 808815E4CD0EF32058321D8B /* TokenMeterWidget.swift */; };
+		E7C1A1B2C3D4E5F60718293A /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7781 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293B /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7782 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293C /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7783 /* Localizable.strings */; };
+		E7C1A1B2C3D4E5F60718293D /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7784 /* Localizable.strings */; };
 		EC0E165FEE5F9976E09F170E /* ClaudeTrack1MethodBAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 981C7EB6E15825B3F156895A /* ClaudeTrack1MethodBAdapter.swift */; };
 		EEE80806B8120D8B936472E7 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25599A289A1DF3D55E070F65 /* SettingsStore.swift */; };
 		EF29D6200D0D53A8DD8FBDC8 /* AppRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DEA6592BAAB18138C4846B9 /* AppRuntime.swift */; };
 		F5BFA61796ADFCBD3D1A400A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 761DA1DA6F935EBF57CD2607 /* Cocoa.framework */; };
 		F65A028A60F492E6D0C06319 /* WidgetSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F51B8EF051C6E483D48849F9 /* WidgetSnapshotStore.swift */; };
+		F8D2B3C4D5E6F708192A3B4C /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7781 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4D /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7782 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4E /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7783 /* Localizable.strings */; };
+		F8D2B3C4D5E6F708192A3B4F /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 9A11B22C33D44E55F66A7784 /* Localizable.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -118,7 +119,6 @@
 		27779FF29310908617B2C4D7 /* AppSettings.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppSettings.swift; path = TokenMeter/Settings/AppSettings.swift; sourceTree = "<group>"; };
 		286076AD23E1987F230E318A /* TokenMeterApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TokenMeterApp.swift; path = TokenMeter/TokenMeterApp.swift; sourceTree = "<group>"; };
 		3046F02C11C477E5058A7795 /* TrackModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrackModels.swift; path = TokenMeter/Domain/TrackModels.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60718293A4B5C /* Track2ModelClassifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Track2ModelClassifier.swift; path = TokenMeter/Domain/Track2ModelClassifier.swift; sourceTree = "<group>"; };
 		4559CD02DB191C9FF9A1AC0E /* OrchestratorClock.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrchestratorClock.swift; path = TokenMeter/Orchestration/OrchestratorClock.swift; sourceTree = "<group>"; };
 		4D2D18F6882C2E36DDA457B6 /* DiagnosticsStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DiagnosticsStore.swift; path = TokenMeter/Diagnostics/DiagnosticsStore.swift; sourceTree = "<group>"; };
 		5117BA4018C294B172E10E06 /* TokenMeterUITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TokenMeterUITests.swift; path = TokenMeterUITests/TokenMeterUITests.swift; sourceTree = "<group>"; };
@@ -134,16 +134,18 @@
 		808815E4CD0EF32058321D8B /* TokenMeterWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TokenMeterWidget.swift; path = TokenMeterWidget/TokenMeterWidget.swift; sourceTree = "<group>"; };
 		84076AA21E1931C5A4D3BBC7 /* WidgetSnapshotRefresher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetSnapshotRefresher.swift; path = TokenMeter/Widget/WidgetSnapshotRefresher.swift; sourceTree = "<group>"; };
 		879BC152265A847F2BEE2940 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/en.lproj/Localizable.strings; sourceTree = "<group>"; };
-		9A11B22C33D44E55F66A7781 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/es.lproj/Localizable.strings; sourceTree = "<group>"; };
-		9A11B22C33D44E55F66A7782 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/ja.lproj/Localizable.strings; sourceTree = "<group>"; };
-		9A11B22C33D44E55F66A7783 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/zh-Hans.lproj/Localizable.strings; sourceTree = "<group>"; };
-		9A11B22C33D44E55F66A7784 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/zh-Hant.lproj/Localizable.strings; sourceTree = "<group>"; };
 		8954FDFF63542E7036DA83E2 /* ClaudeTrack1MethodCAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ClaudeTrack1MethodCAdapter.swift; path = TokenMeter/Providers/ClaudeTrack1MethodCAdapter.swift; sourceTree = "<group>"; };
 		8E9521C954D400746FB588B2 /* CLIToolDiscovery.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CLIToolDiscovery.swift; path = TokenMeter/ToolDiscovery/CLIToolDiscovery.swift; sourceTree = "<group>"; };
 		927E3727D3E0C962212BD720 /* WidgetSnapshotBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetSnapshotBuilder.swift; path = TokenMeter/Widget/WidgetSnapshotBuilder.swift; sourceTree = "<group>"; };
 		931B79629090674EA04F6201 /* Track2Store.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Track2Store.swift; path = TokenMeter/Store/Track2Store.swift; sourceTree = "<group>"; };
 		981C7EB6E15825B3F156895A /* ClaudeTrack1MethodBAdapter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ClaudeTrack1MethodBAdapter.swift; path = TokenMeter/Providers/ClaudeTrack1MethodBAdapter.swift; sourceTree = "<group>"; };
 		9A109847A1B958503BFF4209 /* DiagnosticsLogger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DiagnosticsLogger.swift; path = TokenMeter/Diagnostics/DiagnosticsLogger.swift; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7781 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/es.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7782 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = TokenMeter/ja.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7783 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = "TokenMeter/zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		9A11B22C33D44E55F66A7784 /* Localizable.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = "TokenMeter/zh-Hant.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		9B78B1AB2F52EAFC004305D0 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5C /* Track2ModelClassifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Track2ModelClassifier.swift; path = TokenMeter/Domain/Track2ModelClassifier.swift; sourceTree = "<group>"; };
 		A24B6D7783EC075C5884F2B8 /* track2_codex_primary_normal.jsonl */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; name = track2_codex_primary_normal.jsonl; path = TokenMeterTests/Fixtures/track2_codex_primary_normal.jsonl; sourceTree = "<group>"; };
 		A6041DEB2B5842137AF828F0 /* TokenMeterWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TokenMeterWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A858574348D5CF0CDBAF87D0 /* WidgetSnapshotDTO.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WidgetSnapshotDTO.swift; path = TokenMeter/Widget/WidgetSnapshotDTO.swift; sourceTree = "<group>"; };
@@ -239,6 +241,7 @@
 				379FE6682EEA59A0BFA29F15 /* TokenMeterWidget */,
 				877211324891C096F65C9CDD /* TokenMeterTests */,
 				59C7BF972C15093B18B55817 /* TokenMeterUITests */,
+				9B78B1AB2F52EAFC004305D0 /* AppIcon.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -466,6 +469,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				65D61B25AF8FD0EC5F884C97 /* Localizable.strings in Resources */,
+				9B78B1AC2F52EAFC004305D0 /* AppIcon.icon in Resources */,
 				63BFBD388D20FE3D0E0B082A /* Localizable.strings in Resources */,
 				E7C1A1B2C3D4E5F60718293A /* Localizable.strings in Resources */,
 				E7C1A1B2C3D4E5F60718293B /* Localizable.strings in Resources */,
@@ -584,17 +588,6 @@
 		};
 /* End PBXTargetDependency section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.0.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCBuildConfiguration section */
 		00CFCF3EC08B60D9E1E49458 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -641,12 +634,16 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = TokenMeter/TokenMeter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = SYZS4D43Z6;
 				INFOPLIST_FILE = TokenMeter/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tokenmeter.app;
 				SDKROOT = macosx;
@@ -659,12 +656,16 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = TokenMeter/TokenMeter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = SYZS4D43Z6;
 				INFOPLIST_FILE = TokenMeter/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tokenmeter.app;
 				SDKROOT = macosx;
@@ -720,7 +721,8 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -832,14 +834,6 @@
 		};
 /* End XCBuildConfiguration section */
 
-/* Begin XCSwiftPackageProductDependency section */
-		C1A8F003B3E14E4D9FA10002 /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCConfigurationList section */
 		522A2B337B1963C49E8D0E4B /* Build configuration list for PBXNativeTarget "TokenMeterTests" */ = {
 			isa = XCConfigurationList;
@@ -887,6 +881,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C1A8F003B3E14E4D9FA10002 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C1A8F004B3E14E4D9FA10003 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 69BCD46929A584A39F9DB9A5 /* Project object */;
 }
