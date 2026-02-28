@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "00197A4B103F12B0137D16B5"
+               BlueprintIdentifier = "E4E00678763DD6EB356DEC4B"
                BuildableName = "TokenMeterWidgetExtension.appex"
                BlueprintName = "TokenMeterWidgetExtension"
                ReferencedContainer = "container:TokenMeter.xcodeproj">
@@ -43,7 +43,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "F1B2DD822A6F563255EF0733"
+            BlueprintIdentifier = "5EC371412F6DEE67CE6132A6"
             BuildableName = "TokenMeter.app"
             BlueprintName = "TokenMeter"
             ReferencedContainer = "container:TokenMeter.xcodeproj">

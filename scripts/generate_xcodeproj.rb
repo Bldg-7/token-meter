@@ -65,6 +65,24 @@ unit_tests_target.add_dependency(app_target)
 ui_tests_target.add_dependency(app_target)
 app_target.add_dependency(widget_target)
 
+# Add Sparkle SPM dependency
+sparkle_ref = project.root_object.package_references.find { |r| r.respond_to?(:repositoryURL) && r.repositoryURL == "https://github.com/sparkle-project/Sparkle" }
+unless sparkle_ref
+  sparkle_ref = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
+  sparkle_ref.repositoryURL = "https://github.com/sparkle-project/Sparkle"
+  sparkle_ref.requirement = { "kind" => "upToNextMajorVersion", "minimumVersion" => "2.0.0" }
+  project.root_object.package_references << sparkle_ref
+end
+
+sparkle_dep = project.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)
+sparkle_dep.product_name = "Sparkle"
+sparkle_dep.package = sparkle_ref
+app_target.package_product_dependencies << sparkle_dep
+
+sparkle_build_file = project.new(Xcodeproj::Project::Object::PBXBuildFile)
+sparkle_build_file.product_ref = sparkle_dep
+app_target.frameworks_build_phase.files << sparkle_build_file
+
 embed_phase = app_target.new_copy_files_build_phase("Embed App Extensions")
 embed_phase.symbol_dst_subfolder_spec = :plug_ins
 embed_phase.add_file_reference(widget_target.product_reference, true)
