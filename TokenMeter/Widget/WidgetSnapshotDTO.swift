@@ -30,6 +30,7 @@ struct WidgetSnapshot: Codable, Equatable {
         var totalTokensInLast24Hours: Int
         var series24h: [SeriesBar]
         var stackedSeries24h: [StackedSeriesBar]
+        var quotaOverlay5h: [QuotaOverlayBar]
 
         struct SeriesBar: Codable, Equatable {
             var bucketStart: Date
@@ -46,6 +47,13 @@ struct WidgetSnapshot: Codable, Equatable {
             }
         }
 
+        struct QuotaOverlayBar: Codable, Equatable {
+            var bucketStart: Date
+            var usedPercent: Double?
+            var isReset: Bool
+            var isGap: Bool
+        }
+
         init(
             provider: String,
             lastTimestamp: Date?,
@@ -54,7 +62,8 @@ struct WidgetSnapshot: Codable, Equatable {
             pointsInLast24Hours: Int,
             totalTokensInLast24Hours: Int,
             series24h: [SeriesBar],
-            stackedSeries24h: [StackedSeriesBar] = []
+            stackedSeries24h: [StackedSeriesBar] = [],
+            quotaOverlay5h: [QuotaOverlayBar] = []
         ) {
             self.provider = provider
             self.lastTimestamp = lastTimestamp
@@ -64,6 +73,7 @@ struct WidgetSnapshot: Codable, Equatable {
             self.totalTokensInLast24Hours = totalTokensInLast24Hours
             self.series24h = series24h
             self.stackedSeries24h = stackedSeries24h
+            self.quotaOverlay5h = quotaOverlay5h
         }
 
         init(
@@ -82,7 +92,8 @@ struct WidgetSnapshot: Codable, Equatable {
                 pointsInLast24Hours: pointsInLast24Hours,
                 totalTokensInLast24Hours: totalTokensInLast24Hours,
                 series24h: [],
-                stackedSeries24h: []
+                stackedSeries24h: [],
+                quotaOverlay5h: []
             )
         }
 
@@ -96,6 +107,7 @@ struct WidgetSnapshot: Codable, Equatable {
             totalTokensInLast24Hours = try container.decode(Int.self, forKey: .totalTokensInLast24Hours)
             series24h = try container.decodeIfPresent([SeriesBar].self, forKey: .series24h) ?? []
             stackedSeries24h = try container.decodeIfPresent([StackedSeriesBar].self, forKey: .stackedSeries24h) ?? []
+            quotaOverlay5h = try container.decodeIfPresent([QuotaOverlayBar].self, forKey: .quotaOverlay5h) ?? []
         }
     }
 }

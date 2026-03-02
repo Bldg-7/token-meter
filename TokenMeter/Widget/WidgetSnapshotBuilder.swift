@@ -2,6 +2,7 @@ import Foundation
 
 enum WidgetSnapshotBuilder {
     private static let graphBucketCount = 96
+    private static let rolling5hWindowId = Track1WindowId.rolling5h.rawValue
 
     static func make(
         settings: AppSettings,
@@ -11,6 +12,7 @@ enum WidgetSnapshotBuilder {
     ) -> WidgetSnapshot {
         let providers = enabledProviders(settings: settings)
         let latestTrack1 = latestTrack1ByProvider(track1Snapshots)
+        let track1ByProvider = Dictionary(grouping: track1Snapshots, by: \.provider)
         let track2ByProvider = Dictionary(grouping: track2Points, by: \.provider)
 
         let track1 = providers.map { provider -> WidgetSnapshot.Track1Summary in
@@ -63,6 +65,12 @@ enum WidgetSnapshotBuilder {
                 bucketCount: graphBucketCount,
                 bucketSeconds: graphBucketSeconds
             )
+            let quotaOverlay5h = quotaOverlaySeries(
+                snapshots: track1ByProvider[provider] ?? [],
+                now: now,
+                bucketCount: graphBucketCount,
+                bucketSeconds: graphBucketSeconds
+            )
 
             return WidgetSnapshot.Track2Summary(
                 provider: provider.rawValue,
@@ -72,7 +80,8 @@ enum WidgetSnapshotBuilder {
                 pointsInLast24Hours: recent24h.count,
                 totalTokensInLast24Hours: recent24h.compactMap(totalTokens(for:)).reduce(0, +),
                 series24h: series24h,
-                stackedSeries24h: stackedSeries24h
+                stackedSeries24h: stackedSeries24h,
+                quotaOverlay5h: quotaOverlay5h
             )
         }
 
@@ -222,6 +231,123 @@ enum WidgetSnapshotBuilder {
         return max(1, Int((scale.windowSeconds / Double(bucketCount)).rounded()))
     }
 
+    private static func quotaOverlaySeries(
+        snapshots: [Track1Snapshot],
+        now: Date,
+        bucketCount: Int,
+        bucketSeconds: Int
+    ) -> [WidgetSnapshot.Track2Summary.QuotaOverlayBar] {
+        guard bucketCount > 0, bucketSeconds > 0 else { return [] }
+
+        let endBucketStart = floorToBucketBoundary(now, bucketSeconds: bucketSeconds)
+        let firstBucketStart = endBucketStart.addingTimeInterval(TimeInterval(-bucketSeconds * (bucketCount - 1)))
+        let endExclusive = endBucketStart.addingTimeInterval(TimeInterval(bucketSeconds))
+
+        let rollingSnapshots = snapshots
+            .compactMap { snapshot -> RollingWindowObservation? in
+                guard let window = snapshot.windows.first(where: { $0.windowId.rawValue == rolling5hWindowId }) else {
+                    return nil
+                }
+                return RollingWindowObservation(
+                    observedAt: snapshot.observedAt,
+                    usedPercent: clampedPercent(window.usedPercent),
+                    resetAt: window.resetAt
+                )
+            }
+            .sorted { $0.observedAt < $1.observedAt }
+
+        var out: [WidgetSnapshot.Track2Summary.QuotaOverlayBar] = []
+        out.reserveCapacity(bucketCount)
+        for offset in 0..<bucketCount {
+            let bucketStart = firstBucketStart.addingTimeInterval(TimeInterval(offset * bucketSeconds))
+            out.append(
+                WidgetSnapshot.Track2Summary.QuotaOverlayBar(
+                    bucketStart: bucketStart,
+                    usedPercent: nil,
+                    isReset: false,
+                    isGap: false
+                )
+            )
+        }
+
+        guard rollingSnapshots.isEmpty == false else {
+            return out
+        }
+
+        var expectedIntervalSeconds = 120.0
+        let intervals = zip(rollingSnapshots, rollingSnapshots.dropFirst()).map { next in
+            next.1.observedAt.timeIntervalSince(next.0.observedAt)
+        }.filter { $0 > 0 }
+        if intervals.isEmpty == false {
+            let sorted = intervals.sorted()
+            let lowerQuartileIndex = max(0, (sorted.count - 1) / 4)
+            expectedIntervalSeconds = sorted[lowerQuartileIndex]
+        }
+        let gapThresholdSeconds = max(6 * 60.0, expectedIntervalSeconds * 3.0)
+
+        for observation in rollingSnapshots {
+            guard observation.observedAt >= firstBucketStart,
+                  observation.observedAt < endExclusive
+            else {
+                continue
+            }
+
+            let bucketStart = floorToBucketBoundary(observation.observedAt, bucketSeconds: bucketSeconds)
+            let bucketIndex = Int(bucketStart.timeIntervalSince(firstBucketStart) / TimeInterval(bucketSeconds))
+            guard out.indices.contains(bucketIndex) else { continue }
+            if let usedPercent = observation.usedPercent {
+                out[bucketIndex].usedPercent = usedPercent
+            }
+        }
+
+        for pair in zip(rollingSnapshots, rollingSnapshots.dropFirst()) {
+            let previous = pair.0
+            let current = pair.1
+            let delta = current.observedAt.timeIntervalSince(previous.observedAt)
+
+            if delta > gapThresholdSeconds {
+                let previousIndex = bucketIndex(for: previous.observedAt, firstBucketStart: firstBucketStart, bucketSeconds: bucketSeconds, bucketCount: bucketCount)
+                let currentIndex = bucketIndex(for: current.observedAt, firstBucketStart: firstBucketStart, bucketSeconds: bucketSeconds, bucketCount: bucketCount)
+                if let previousIndex, let currentIndex, currentIndex - previousIndex > 1 {
+                    for index in (previousIndex + 1)..<currentIndex where out.indices.contains(index) {
+                        out[index].isGap = true
+                        out[index].usedPercent = nil
+                    }
+                }
+            }
+
+            if let resetTime = detectedResetTime(previous: previous, current: current) {
+                let resetBucket = floorToBucketBoundary(resetTime, bucketSeconds: bucketSeconds)
+                let index = Int(resetBucket.timeIntervalSince(firstBucketStart) / TimeInterval(bucketSeconds))
+                guard out.indices.contains(index) else { continue }
+                out[index].isReset = true
+                out[index].usedPercent = 0
+            }
+        }
+
+        var lastKnown: Double?
+        for index in out.indices {
+            if out[index].isGap {
+                lastKnown = nil
+                continue
+            }
+            if out[index].isReset {
+                lastKnown = 0
+                if out[index].usedPercent == nil {
+                    out[index].usedPercent = 0
+                }
+                continue
+            }
+            if let used = out[index].usedPercent {
+                lastKnown = used
+            } else if let lastKnown {
+                out[index].usedPercent = lastKnown
+            }
+        }
+
+        return out
+    }
+
     private static func floorToBucketBoundary(_ date: Date, bucketSeconds: Int) -> Date {
         guard bucketSeconds > 0 else { return date }
         let epoch = Int(date.timeIntervalSince1970)
@@ -233,5 +359,46 @@ enum WidgetSnapshotBuilder {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func clampedPercent(_ value: Double?) -> Double? {
+        guard let value else { return nil }
+        return min(100, max(0, value))
+    }
+
+    private static func bucketIndex(
+        for timestamp: Date,
+        firstBucketStart: Date,
+        bucketSeconds: Int,
+        bucketCount: Int
+    ) -> Int? {
+        let index = Int(timestamp.timeIntervalSince(firstBucketStart) / TimeInterval(bucketSeconds))
+        guard index >= 0, index < bucketCount else { return nil }
+        return index
+    }
+
+    private static func detectedResetTime(previous: RollingWindowObservation, current: RollingWindowObservation) -> Date? {
+        if let prevReset = previous.resetAt,
+           current.observedAt >= prevReset
+        {
+            return prevReset
+        }
+
+        if let previousUsed = previous.usedPercent,
+           let currentUsed = current.usedPercent,
+           previousUsed >= 10,
+           currentUsed <= 5,
+           currentUsed + 10 <= previousUsed
+        {
+            return current.observedAt
+        }
+
+        return nil
+    }
+
+    private struct RollingWindowObservation {
+        let observedAt: Date
+        let usedPercent: Double?
+        let resetAt: Date?
     }
 }

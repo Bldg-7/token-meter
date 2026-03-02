@@ -402,6 +402,7 @@ private struct TokenMeterProviderWidgetView: View {
     @ViewBuilder
     private func track2Graphic(track2: WidgetSnapshot.Track2Summary?) -> some View {
         let bars = stackedSeriesBars(track2: track2)
+        let quotaOverlay = quotaOverlayBars(track2: track2)
         let bucketSeconds = inferredBucketSeconds(from: bars)
         let yAxis = yAxisLabels(from: bars)
 
@@ -422,7 +423,8 @@ private struct TokenMeterProviderWidgetView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         DotStackedBarGraph(
                             bars: bars,
-                            maxDots: dotRowCount
+                            maxDots: dotRowCount,
+                            quotaOverlay: quotaOverlay
                         )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .frame(height: dotGraphHeight)
@@ -655,6 +657,13 @@ private struct TokenMeterProviderWidgetView: View {
         return resampledBars(bars, targetCount: graphColumnCount)
     }
 
+    private func quotaOverlayBars(track2: WidgetSnapshot.Track2Summary?) -> [WidgetSnapshot.Track2Summary.QuotaOverlayBar] {
+        guard let track2 else {
+            return []
+        }
+        return resampledQuotaOverlayBars(track2.quotaOverlay5h, targetCount: graphColumnCount)
+    }
+
     private func resampledBars(
         _ source: [WidgetSnapshot.Track2Summary.StackedSeriesBar],
         targetCount: Int
@@ -705,6 +714,48 @@ private struct TokenMeterProviderWidgetView: View {
                 WidgetSnapshot.Track2Summary.StackedSeriesBar(
                     bucketStart: source[start].bucketStart,
                     segments: segments
+                )
+            )
+        }
+
+        return out
+    }
+
+    private func resampledQuotaOverlayBars(
+        _ source: [WidgetSnapshot.Track2Summary.QuotaOverlayBar],
+        targetCount: Int
+    ) -> [WidgetSnapshot.Track2Summary.QuotaOverlayBar] {
+        guard source.isEmpty == false, targetCount > 0 else {
+            return []
+        }
+
+        guard source.count > targetCount else {
+            return source
+        }
+
+        var out: [WidgetSnapshot.Track2Summary.QuotaOverlayBar] = []
+        out.reserveCapacity(targetCount)
+
+        for bucketIndex in 0..<targetCount {
+            let start = source.count * bucketIndex / targetCount
+            let nominalEnd = source.count * (bucketIndex + 1) / targetCount
+            let end = min(source.count, max(start + 1, nominalEnd))
+
+            guard start < source.count, start < end else {
+                continue
+            }
+
+            let slice = source[start..<end]
+            let lastUsed = slice.reversed().compactMap(\.usedPercent).first
+            let reset = slice.contains(where: \.isReset)
+            let gap = slice.contains(where: \.isGap)
+
+            out.append(
+                WidgetSnapshot.Track2Summary.QuotaOverlayBar(
+                    bucketStart: source[start].bucketStart,
+                    usedPercent: lastUsed,
+                    isReset: reset,
+                    isGap: gap
                 )
             )
         }
@@ -789,6 +840,7 @@ private struct DotMatrixYAxisLabels: View {
 private struct DotStackedBarGraph: View {
     var bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]
     var maxDots: Int
+    var quotaOverlay: [WidgetSnapshot.Track2Summary.QuotaOverlayBar]
 
     private let dotFillRatio: CGFloat = 0.78
     private let minimumDotDiameter: CGFloat = 1.8
@@ -815,6 +867,8 @@ private struct DotStackedBarGraph: View {
                     return
                 }
 
+                drawResetHighlights(context: &context, metrics: metrics)
+
                 for columnIndex in 0..<layout.columns.count {
                     let column = layout.columns[columnIndex]
                     let centerX = metrics.columnCenterX(for: columnIndex)
@@ -834,6 +888,8 @@ private struct DotStackedBarGraph: View {
                         )
                     }
                 }
+
+                drawQuotaOverlay(context: &context, metrics: metrics)
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
         }
@@ -965,6 +1021,128 @@ private struct DotStackedBarGraph: View {
         }
 
         return allocations.filter { $0.count > 0 }
+    }
+
+    private func drawResetHighlights(context: inout GraphicsContext, metrics: DotMetrics) {
+        guard quotaOverlay.isEmpty == false else { return }
+
+        let resetColor = Color.accentColor.opacity(0.20)
+        let bandWidth = max(2, metrics.columnStep * 1.5)
+
+        for index in 0..<min(metrics.columnCount, quotaOverlay.count) {
+            guard quotaOverlay[index].isReset else { continue }
+            let centerX = metrics.columnCenterX(for: index)
+            let rect = CGRect(
+                x: centerX - (bandWidth / 2),
+                y: 0,
+                width: bandWidth,
+                height: metrics.height
+            )
+            context.fill(Path(rect), with: .color(resetColor))
+        }
+    }
+
+    private func drawQuotaOverlay(context: inout GraphicsContext, metrics: DotMetrics) {
+        guard quotaOverlay.isEmpty == false else { return }
+
+        let count = min(metrics.columnCount, quotaOverlay.count)
+        guard count > 0 else { return }
+
+        let lineColor = Color.accentColor.opacity(0.92)
+        var runStart: Int?
+
+        for index in 0..<count {
+            if shouldStartRun(at: index, count: count) {
+                runStart = index
+            }
+
+            if let startIndex = runStart, shouldEndRun(at: index, count: count) {
+                let runEnd = index
+                drawStepRun(
+                    context: &context,
+                    metrics: metrics,
+                    from: startIndex,
+                    to: runEnd,
+                    lineColor: lineColor
+                )
+                runStart = nil
+            }
+        }
+
+        if let runStart {
+            drawStepRun(
+                context: &context,
+                metrics: metrics,
+                from: runStart,
+                to: count - 1,
+                lineColor: lineColor
+            )
+        }
+    }
+
+    private func shouldStartRun(at index: Int, count: Int) -> Bool {
+        guard index >= 0, index < count else { return false }
+        let current = quotaOverlay[index]
+        guard current.usedPercent != nil, current.isGap == false else { return false }
+        if index == 0 { return true }
+        let previous = quotaOverlay[index - 1]
+        if previous.usedPercent == nil || previous.isGap || current.isReset {
+            return true
+        }
+        return false
+    }
+
+    private func shouldEndRun(at index: Int, count: Int) -> Bool {
+        guard index >= 0, index < count else { return true }
+        let current = quotaOverlay[index]
+        guard current.usedPercent != nil, current.isGap == false else { return true }
+        guard index + 1 < count else { return true }
+
+        let next = quotaOverlay[index + 1]
+        if next.usedPercent == nil || next.isGap || next.isReset {
+            return true
+        }
+        return false
+    }
+
+    private func drawStepRun(
+        context: inout GraphicsContext,
+        metrics: DotMetrics,
+        from start: Int,
+        to end: Int,
+        lineColor: Color
+    ) {
+        guard start <= end else { return }
+        guard let startPercent = quotaOverlay[start].usedPercent else { return }
+
+        var path = Path()
+        let startPoint = CGPoint(
+            x: metrics.columnCenterX(for: start),
+            y: yPosition(forPercent: startPercent, metrics: metrics)
+        )
+        path.move(to: startPoint)
+
+        var previousY = startPoint.y
+        if end > start {
+            for index in (start + 1)...end {
+                guard let currentPercent = quotaOverlay[index].usedPercent else { continue }
+                let x = metrics.columnCenterX(for: index)
+                let y = yPosition(forPercent: currentPercent, metrics: metrics)
+                path.addLine(to: CGPoint(x: x, y: previousY))
+                path.addLine(to: CGPoint(x: x, y: y))
+                previousY = y
+            }
+        }
+
+        context.stroke(path, with: .color(lineColor), style: StrokeStyle(lineWidth: max(1.2, metrics.dotDiameter * 0.35), lineCap: .round, lineJoin: .round))
+    }
+
+    private func yPosition(forPercent rawValue: Double, metrics: DotMetrics) -> CGFloat {
+        let percent = min(100, max(0, rawValue))
+        let normalized = CGFloat(percent / 100.0)
+        let minY = metrics.dotRadius
+        let maxY = max(minY, metrics.height - metrics.dotRadius)
+        return maxY - ((maxY - minY) * normalized)
     }
 
     private struct DotLayout {

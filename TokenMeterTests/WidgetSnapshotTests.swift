@@ -106,6 +106,7 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertNotNil(codex)
         XCTAssertEqual(codex?.series24h.count, 96)
         XCTAssertEqual(codex?.stackedSeries24h.count, 96)
+        XCTAssertEqual(codex?.quotaOverlay5h.count, 96)
 
         // Derive per-hour totals directly from timeline points (p0 and p1)
         let bucketPrev = cal.dateInterval(of: .hour, for: p0.timestamp)?.start ?? prevHourStart
@@ -199,6 +200,7 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertNotNil(codex)
         XCTAssertEqual(codex?.series24h.count, 96)
         XCTAssertEqual(codex?.stackedSeries24h.count, 96)
+        XCTAssertEqual(codex?.quotaOverlay5h.count, 96)
 
         let bucketDelta = codex?.series24h[1].bucketStart.timeIntervalSince(codex?.series24h[0].bucketStart ?? now)
         XCTAssertEqual(Int(bucketDelta ?? 0), 113)
@@ -256,5 +258,82 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(summary.provider, "codex")
         XCTAssertEqual(summary.series24h.count, 1)
         XCTAssertEqual(summary.stackedSeries24h, [])
+        XCTAssertEqual(summary.quotaOverlay5h, [])
+    }
+
+    func testQuotaOverlaySeriesMarksResetAndCollectionGap() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: true),
+            claude: ClaudeSettings(enabled: false),
+            widgetTrack2TimeScale: .hours3
+        )
+
+        let snapshots: [Track1Snapshot] = [
+            Track1Snapshot(
+                provider: .codex,
+                observedAt: now.addingTimeInterval(-160 * 60),
+                source: .cliMethodB,
+                plan: .pro,
+                windows: [
+                    Track1Window(
+                        windowId: .rolling5h,
+                        usedPercent: 62,
+                        remainingPercent: 38,
+                        resetAt: now.addingTimeInterval(-70 * 60),
+                        rawScopeLabel: "rolling_5h"
+                    ),
+                ],
+                confidence: .high,
+                parserVersion: "test"
+            ),
+            Track1Snapshot(
+                provider: .codex,
+                observedAt: now.addingTimeInterval(-145 * 60),
+                source: .cliMethodB,
+                plan: .pro,
+                windows: [
+                    Track1Window(
+                        windowId: .rolling5h,
+                        usedPercent: 74,
+                        remainingPercent: 26,
+                        resetAt: now.addingTimeInterval(-70 * 60),
+                        rawScopeLabel: "rolling_5h"
+                    ),
+                ],
+                confidence: .high,
+                parserVersion: "test"
+            ),
+            Track1Snapshot(
+                provider: .codex,
+                observedAt: now.addingTimeInterval(-35 * 60),
+                source: .cliMethodB,
+                plan: .pro,
+                windows: [
+                    Track1Window(
+                        windowId: .rolling5h,
+                        usedPercent: 4,
+                        remainingPercent: 96,
+                        resetAt: now.addingTimeInterval(4 * 60 * 60),
+                        rawScopeLabel: "rolling_5h"
+                    ),
+                ],
+                confidence: .high,
+                parserVersion: "test"
+            ),
+        ]
+
+        let snapshot = WidgetSnapshotBuilder.make(
+            settings: settings,
+            track1Snapshots: snapshots,
+            track2Points: [],
+            now: now
+        )
+
+        let codex = snapshot.track2.first(where: { $0.provider == "codex" })
+        XCTAssertNotNil(codex)
+        XCTAssertEqual(codex?.quotaOverlay5h.count, 96)
+        XCTAssertTrue(codex?.quotaOverlay5h.contains(where: \.isReset) == true)
+        XCTAssertTrue(codex?.quotaOverlay5h.contains(where: \.isGap) == true)
     }
 }
