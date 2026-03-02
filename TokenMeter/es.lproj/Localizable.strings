@@ -8,10 +8,10 @@
 "content.badge.health.missing" = "faltante";
 "content.badge.health.ok" = "ok";
 "content.badge.health.stale" = "desactualizado";
-"content.badge.health_format" = "health: %@";
-"content.badge.source_format" = "src: %@";
-"content.badge.source.cli_method_b" = "CLI Método B";
-"content.badge.source.web_method_c" = "Web Método C";
+"content.badge.health_format" = "estado: %@";
+"content.badge.source_format" = "fuente: %@";
+"content.badge.source.cli_method_b" = "Método B (CLI)";
+"content.badge.source.web_method_c" = "Método C (Web)";
 "content.error.load" = "Error al cargar: %@";
 "content.error.save_widget_range" = "Error al guardar el rango del widget: %@";
 "content.no_providers_enabled" = "No hay proveedores habilitados";
@@ -40,11 +40,11 @@
 "content.track2.no_data" = "Aún no hay datos de Track 2";
 "content.track2.no_model_breakdown" = "No hay desglose por modelo disponible";
 "content.track2.no_points_in_range" = "No hay puntos de telemetría local en el rango seleccionado";
-"content.track2.points_format" = "points: %ld";
+"content.track2.points_format" = "puntos: %ld";
 "content.track2.provider" = "Proveedor";
 "content.track2.provider_all" = "Todos";
 "content.track2.range" = "Rango";
-"content.track2.sessions_format" = "sessions: %ld";
+"content.track2.sessions_format" = "sesiones: %ld";
 "content.track2.tokens_format" = "tokens: %ld";
 "content.track2.total_format" = "total: %ld";
 "content.widget_range_format" = "Rango del widget: %@";
@@ -78,7 +78,7 @@
 "widget.config.claude.name" = "TokenMeter: Claude";
 "widget.config.codex.description" = "Instantánea de plan/cuota de Codex y tendencia de uso local.";
 "widget.config.codex.name" = "TokenMeter: Codex";
-"widget.empty_snapshot" = "Aún no hay snapshot del widget";
+"widget.empty_snapshot" = "Aún no hay instantánea del widget";
 "widget.na" = "n/a";
 "widget.no_local_telemetry" = "Sin telemetría local";
 "widget.now" = "ahora";
@@ -90,7 +90,7 @@
 "widget.quota_session" = "cuota (sesión)";
 "widget.quota_week" = "cuota (semana)";
 "widget.reset_in" = "Reinicio en";
-"widget.resets" = "Reinicia";
+"widget.resets" = "Reinicios";
 "widget.total" = "Total";
 "widget.unknown" = "Desconocido";
 "widget.usage_na" = "uso n/a";
