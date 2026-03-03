@@ -52,6 +52,8 @@
 "content.widget_time_range.range" = "范围";
 "content.widget_time_range.title" = "Track 2 小组件时间范围";
 "menu.check_for_updates" = "检查更新…";
+"menu.install_update" = "安装更新…";
+"menu.update_available" = "有可用更新";
 "menu.version" = "版本";
 "menu.quit" = "退出";
 "menu.time_range_option" = "时间范围选项";

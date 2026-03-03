@@ -46,13 +46,18 @@ private struct MenuBarMenuView: View {
 
         Divider()
 
-        if updater.hasUpdateAvailable {
-            Button("menu.check_for_updates") {
-                updater.checkForUpdates()
-            }
-
-            Divider()
+        Button(updater.hasUpdateAvailable ? "menu.install_update" : "menu.check_for_updates") {
+            updater.checkForUpdates()
         }
+        .disabled(!updater.canCheckForUpdates)
+
+        if updater.hasUpdateAvailable {
+            Text("menu.update_available")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+
+        Divider()
 
         (Text("menu.version") + Text(" \(updater.currentVersion)"))
             .foregroundStyle(.secondary)
@@ -120,6 +125,7 @@ final class SparkleUpdaterService: NSObject, ObservableObject, SPUUpdaterDelegat
     }
 
     func checkForUpdates() {
+        guard controller.updater.canCheckForUpdates else { return }
         controller.checkForUpdates(nil)
     }
 

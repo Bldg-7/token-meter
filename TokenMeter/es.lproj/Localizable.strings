@@ -52,6 +52,8 @@
 "content.widget_time_range.range" = "Rango";
 "content.widget_time_range.title" = "Rango de tiempo del widget de Track 2";
 "menu.check_for_updates" = "Buscar actualizaciones…";
+"menu.install_update" = "Instalar actualización…";
+"menu.update_available" = "Actualización disponible";
 "menu.version" = "Versión";
 "menu.quit" = "Salir";
 "menu.time_range_option" = "Opción de rango de tiempo";

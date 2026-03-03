@@ -52,6 +52,8 @@
 "content.widget_time_range.range" = "범위";
 "content.widget_time_range.title" = "Track 2 위젯 시간 범위";
 "menu.check_for_updates" = "업데이트 확인…";
+"menu.install_update" = "업데이트 설치…";
+"menu.update_available" = "새 업데이트 사용 가능";
 "menu.version" = "버전";
 "menu.quit" = "종료";
 "menu.time_range_option" = "시간 범위 옵션";
