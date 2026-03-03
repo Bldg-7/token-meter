@@ -1026,8 +1026,8 @@ private struct DotStackedBarGraph: View {
     private func drawResetHighlights(context: inout GraphicsContext, metrics: DotMetrics) {
         guard quotaOverlay.isEmpty == false else { return }
 
-        let resetColor = Color.accentColor.opacity(0.20)
-        let bandWidth = max(2, metrics.columnStep * 1.5)
+        let resetColor = Color.primary.opacity(0.08)
+        let bandWidth = max(2, metrics.columnStep * 1.0)
 
         for index in 0..<min(metrics.columnCount, quotaOverlay.count) {
             guard quotaOverlay[index].isReset else { continue }
@@ -1048,7 +1048,7 @@ private struct DotStackedBarGraph: View {
         let count = min(metrics.columnCount, quotaOverlay.count)
         guard count > 0 else { return }
 
-        let lineColor = Color.accentColor.opacity(0.92)
+        let lineColor = Color.primary.opacity(0.45)
         var runStart: Int?
 
         for index in 0..<count {
@@ -1134,7 +1134,7 @@ private struct DotStackedBarGraph: View {
             }
         }
 
-        context.stroke(path, with: .color(lineColor), style: StrokeStyle(lineWidth: max(1.2, metrics.dotDiameter * 0.35), lineCap: .round, lineJoin: .round))
+        context.stroke(path, with: .color(lineColor), style: StrokeStyle(lineWidth: max(1.0, metrics.dotDiameter * 0.22), lineCap: .round, lineJoin: .round))
     }
 
     private func yPosition(forPercent rawValue: Double, metrics: DotMetrics) -> CGFloat {
