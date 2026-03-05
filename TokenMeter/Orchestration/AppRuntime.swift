@@ -32,6 +32,7 @@ final class AppRuntime: ObservableObject {
         }
 
         let periodNs = UInt64(max(1, settings.refreshIntervalSec)) * 1_000_000_000
+        let claudeTrack1PeriodNs = periodNs * 5
         let track1TimeoutNs: UInt64 = 2 * 1_000_000_000
         let track2TimeoutNs: UInt64 = 15 * 1_000_000_000
 
@@ -81,7 +82,7 @@ final class AppRuntime: ObservableObject {
                 collectionUnit(
                     provider: .claude,
                     track: .track1,
-                    periodNs: periodNs,
+                    periodNs: claudeTrack1PeriodNs,
                     timeoutNs: track1TimeoutNs,
                     settings: settings,
                     snapshotRefresher: snapshotRefresher
