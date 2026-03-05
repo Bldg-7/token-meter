@@ -1026,7 +1026,7 @@ private struct DotStackedBarGraph: View {
     private func drawResetHighlights(context: inout GraphicsContext, metrics: DotMetrics) {
         guard quotaOverlay.isEmpty == false else { return }
 
-        let resetColor = Color.primary.opacity(0.08)
+        let resetColor = Color.white.opacity(0.06)
         let bandWidth = max(2, metrics.columnStep * 1.0)
 
         for index in 0..<min(metrics.columnCount, quotaOverlay.count) {
@@ -1048,7 +1048,7 @@ private struct DotStackedBarGraph: View {
         let count = min(metrics.columnCount, quotaOverlay.count)
         guard count > 0 else { return }
 
-        let lineColor = Color.primary.opacity(0.45)
+        let lineColor = Color.white.opacity(0.35)
         var runStart: Int?
 
         for index in 0..<count {
