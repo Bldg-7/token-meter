@@ -664,38 +664,32 @@ private struct TokenMeterProviderWidgetView: View {
         return resampledQuotaOverlayBars(track2.quotaOverlay5h, targetCount: graphColumnCount)
     }
 
+    private func resampled<T>(_ source: [T], targetCount: Int, merge: (ArraySlice<T>) -> T) -> [T] {
+        guard source.isEmpty == false, targetCount > 0 else { return [] }
+        guard source.count > targetCount else { return source }
+        var out: [T] = []
+        out.reserveCapacity(targetCount)
+        for i in 0..<targetCount {
+            let start = source.count * i / targetCount
+            let nominalEnd = source.count * (i + 1) / targetCount
+            let end = min(source.count, max(start + 1, nominalEnd))
+            guard start < source.count, start < end else { continue }
+            out.append(merge(source[start..<end]))
+        }
+        return out
+    }
+
     private func resampledBars(
         _ source: [WidgetSnapshot.Track2Summary.StackedSeriesBar],
         targetCount: Int
     ) -> [WidgetSnapshot.Track2Summary.StackedSeriesBar] {
-        guard source.isEmpty == false, targetCount > 0 else {
-            return []
-        }
-
-        guard source.count > targetCount else {
-            return source
-        }
-
-        var out: [WidgetSnapshot.Track2Summary.StackedSeriesBar] = []
-        out.reserveCapacity(targetCount)
-
-        for bucketIndex in 0..<targetCount {
-            let start = source.count * bucketIndex / targetCount
-            let nominalEnd = source.count * (bucketIndex + 1) / targetCount
-            let end = min(source.count, max(start + 1, nominalEnd))
-
-            guard start < source.count, start < end else {
-                continue
-            }
-
-            let slice = source[start..<end]
+        resampled(source, targetCount: targetCount) { slice in
             var familyTotals: [String: Int] = [:]
             for bar in slice {
                 for segment in bar.segments where segment.totalTokens > 0 {
                     familyTotals[segment.family, default: 0] += segment.totalTokens
                 }
             }
-
             let segments = familyTotals
                 .map { family, total in
                     WidgetSnapshot.Track2Summary.StackedSeriesBar.FamilySegment(
@@ -709,58 +703,25 @@ private struct TokenMeterProviderWidgetView: View {
                     }
                     return $0.family < $1.family
                 }
-
-            out.append(
-                WidgetSnapshot.Track2Summary.StackedSeriesBar(
-                    bucketStart: source[start].bucketStart,
-                    segments: segments
-                )
+            return WidgetSnapshot.Track2Summary.StackedSeriesBar(
+                bucketStart: slice[slice.startIndex].bucketStart,
+                segments: segments
             )
         }
-
-        return out
     }
 
     private func resampledQuotaOverlayBars(
         _ source: [WidgetSnapshot.Track2Summary.QuotaOverlayBar],
         targetCount: Int
     ) -> [WidgetSnapshot.Track2Summary.QuotaOverlayBar] {
-        guard source.isEmpty == false, targetCount > 0 else {
-            return []
-        }
-
-        guard source.count > targetCount else {
-            return source
-        }
-
-        var out: [WidgetSnapshot.Track2Summary.QuotaOverlayBar] = []
-        out.reserveCapacity(targetCount)
-
-        for bucketIndex in 0..<targetCount {
-            let start = source.count * bucketIndex / targetCount
-            let nominalEnd = source.count * (bucketIndex + 1) / targetCount
-            let end = min(source.count, max(start + 1, nominalEnd))
-
-            guard start < source.count, start < end else {
-                continue
-            }
-
-            let slice = source[start..<end]
-            let lastUsed = slice.reversed().compactMap(\.usedPercent).first
-            let reset = slice.contains(where: \.isReset)
-            let gap = slice.contains(where: \.isGap)
-
-            out.append(
-                WidgetSnapshot.Track2Summary.QuotaOverlayBar(
-                    bucketStart: source[start].bucketStart,
-                    usedPercent: lastUsed,
-                    isReset: reset,
-                    isGap: gap
-                )
+        resampled(source, targetCount: targetCount) { slice in
+            WidgetSnapshot.Track2Summary.QuotaOverlayBar(
+                bucketStart: slice[slice.startIndex].bucketStart,
+                usedPercent: slice.reversed().compactMap(\.usedPercent).first,
+                isReset: slice.contains(where: \.isReset),
+                isGap: slice.contains(where: \.isGap)
             )
         }
-
-        return out
     }
 
     private func inferredBucketSeconds(from bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]) -> Int {

@@ -292,11 +292,9 @@ enum WidgetSnapshotBuilder {
                 continue
             }
 
-            let bucketStart = floorToBucketBoundary(observation.observedAt, bucketSeconds: bucketSeconds)
-            let bucketIndex = Int(bucketStart.timeIntervalSince(firstBucketStart) / TimeInterval(bucketSeconds))
-            guard out.indices.contains(bucketIndex) else { continue }
+            guard let idx = bucketIndex(for: observation.observedAt, firstBucketStart: firstBucketStart, bucketSeconds: bucketSeconds, bucketCount: bucketCount) else { continue }
             if let usedPercent = observation.usedPercent {
-                out[bucketIndex].usedPercent = usedPercent
+                out[idx].usedPercent = usedPercent
             }
         }
 
