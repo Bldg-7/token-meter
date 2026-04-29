@@ -1596,8 +1596,13 @@ struct ProviderCollectionRuntime: Sendable {
         let primaryPoints = collectIncrementalTrack2Points(
             from: primaryFiles,
             provider: .codex,
-            parser: { data, sourceFile in
-                CodexTrack2PrimaryParser.timelinePoints(from: data, sourceFile: sourceFile)
+            parser: { data, sourceFile, initialModel in
+                let output = CodexTrack2PrimaryParser.timelinePoints(
+                    from: data,
+                    sourceFile: sourceFile,
+                    initialModel: initialModel
+                )
+                return Track2ParseResult(points: output.points, lastKnownModel: output.lastKnownModel)
             }
         )
         let openCodePoints = try collectOpenCodeTrack2Points(provider: .codex)
@@ -1618,8 +1623,11 @@ struct ProviderCollectionRuntime: Sendable {
         var points: [Track2TimelinePoint] = collectIncrementalTrack2Points(
             from: secondaryFiles,
             provider: .claude,
-            parser: { data, sourceFile in
-                ClaudeTrack2SecondaryParser.timelinePoints(from: data, sourceFile: sourceFile)
+            parser: { data, sourceFile, _ in
+                Track2ParseResult(
+                    points: ClaudeTrack2SecondaryParser.timelinePoints(from: data, sourceFile: sourceFile),
+                    lastKnownModel: nil
+                )
             }
         )
 
@@ -1730,10 +1738,15 @@ struct ProviderCollectionRuntime: Sendable {
         return rows
     }
 
+    struct Track2ParseResult {
+        var points: [Track2TimelinePoint]
+        var lastKnownModel: String?
+    }
+
     private func collectIncrementalTrack2Points(
         from files: [URL],
         provider: ProviderId,
-        parser: (Data, String) -> [Track2TimelinePoint]
+        parser: (Data, String, String?) -> Track2ParseResult
     ) -> [Track2TimelinePoint] {
         let homeKey = track2StateHomeKey()
         let currentCursors = Self.track2IncrementalState.fileCursors(homeKey: homeKey, provider: provider)
@@ -1749,6 +1762,7 @@ struct ProviderCollectionRuntime: Sendable {
             let previousCursor = currentCursors[filePath]
             var readOffset: Int64 = 0
             var parsePrefix = Data()
+            let initialModel = previousCursor?.lastKnownModel
 
             if let previousCursor {
                 if previousCursor.matchesIdentity(with: metadata) == false || metadata.fileSize < previousCursor.offset {
@@ -1780,7 +1794,7 @@ struct ProviderCollectionRuntime: Sendable {
             if readOffset == 0 {
                 parseData = parseBuffer
                 if pendingTail.isEmpty == false,
-                   parser(pendingTail, filePath).isEmpty == false
+                   parser(pendingTail, filePath, initialModel).points.isEmpty == false
                 {
                     pendingTail = Data()
                 }
@@ -1790,8 +1804,13 @@ struct ProviderCollectionRuntime: Sendable {
                 parseData = Data()
             }
 
+            var lastKnownModel = initialModel
             if parseData.isEmpty == false {
-                points += parser(parseData, filePath)
+                let parsed = parser(parseData, filePath, initialModel)
+                points += parsed.points
+                if parsed.lastKnownModel != nil {
+                    lastKnownModel = parsed.lastKnownModel
+                }
             }
 
             let contextSource = parseData.isEmpty ? (previousCursor?.contextTail ?? Data()) : parseData
@@ -1803,7 +1822,8 @@ struct ProviderCollectionRuntime: Sendable {
                 fileSize: metadata.fileSize,
                 offset: metadata.fileSize,
                 pendingTail: pendingTail,
-                contextTail: contextTail
+                contextTail: contextTail,
+                lastKnownModel: lastKnownModel
             )
         }
 
@@ -2013,6 +2033,10 @@ struct ProviderCollectionRuntime: Sendable {
         var offset: Int64
         var pendingTail: Data
         var contextTail: Data
+        // Carries forward the last model observed in this file so that
+        // incremental cycles after the file head has scrolled past the
+        // 64KB context tail can still tag token events with a model.
+        var lastKnownModel: String?
 
         func matchesIdentity(with metadata: Track2FileMetadata) -> Bool {
             if let inode, let metadataInode = metadata.inode {

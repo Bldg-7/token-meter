@@ -6,18 +6,35 @@ struct CodexTrack2PrimaryParser {
     fileprivate static let nearbyModelHistoryLimit = 64
 
     static func timelinePoints(from data: Data, sourceFile: String) -> [Track2TimelinePoint] {
-        guard let text = String(data: data, encoding: .utf8) else {
-            return []
-        }
-        return timelinePoints(fromJSONL: text, sourceFile: sourceFile)
+        timelinePoints(from: data, sourceFile: sourceFile, initialModel: nil).points
     }
 
     static func timelinePoints(fromJSONL text: String, sourceFile: String) -> [Track2TimelinePoint] {
+        timelinePoints(fromJSONL: text, sourceFile: sourceFile, initialModel: nil).points
+    }
+
+    static func timelinePoints(
+        from data: Data,
+        sourceFile: String,
+        initialModel: String?
+    ) -> ParseOutput {
+        guard let text = String(data: data, encoding: .utf8) else {
+            return ParseOutput(points: [], lastKnownModel: normalizedModel(initialModel))
+        }
+        return timelinePoints(fromJSONL: text, sourceFile: sourceFile, initialModel: initialModel)
+    }
+
+    static func timelinePoints(
+        fromJSONL text: String,
+        sourceFile: String,
+        initialModel: String?
+    ) -> ParseOutput {
         var points: [Track2TimelinePoint] = []
         var lastKnownModelBySession: [String: String] = [:]
         var lastCumulativeTotalsBySession: [String: Int] = [:]
         var seenCumulativeTotals: Set<String> = []
         var recentModels: [RecentModelContext] = []
+        var fileScopedModel: String? = normalizedModel(initialModel)
         var lineIndex = 0
 
         text.enumerateLines { line, _ in
@@ -28,6 +45,7 @@ struct CodexTrack2PrimaryParser {
             }
 
             if let model = normalizedModel(parsed.model) {
+                fileScopedModel = model
                 if let sessionId = parsed.sessionId {
                     lastKnownModelBySession[sessionId] = model
                 }
@@ -66,20 +84,30 @@ struct CodexTrack2PrimaryParser {
                     recentModels: recentModels
                 ) {
                     point.model = inferredNearbyModel
+                } else if let inferredFileScopedModel = fileScopedModel {
+                    point.model = inferredFileScopedModel
                 }
-            } else if normalizedModel(point.model) == nil,
-                      let inferredNearbyModel = nearbyModel(
-                          forSessionId: nil,
-                          lineIndex: lineIndex,
-                          recentModels: recentModels
-                      ) {
-                point.model = inferredNearbyModel
+            } else if normalizedModel(point.model) == nil {
+                if let inferredNearbyModel = nearbyModel(
+                    forSessionId: nil,
+                    lineIndex: lineIndex,
+                    recentModels: recentModels
+                ) {
+                    point.model = inferredNearbyModel
+                } else if let inferredFileScopedModel = fileScopedModel {
+                    point.model = inferredFileScopedModel
+                }
             }
 
             points.append(point)
         }
 
-        return points
+        return ParseOutput(points: points, lastKnownModel: fileScopedModel)
+    }
+
+    struct ParseOutput {
+        var points: [Track2TimelinePoint]
+        var lastKnownModel: String?
     }
 
     private static func parseLine(_ rawLine: String) -> ParsedCodexLine? {

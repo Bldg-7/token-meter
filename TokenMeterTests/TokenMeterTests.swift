@@ -325,6 +325,50 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(points[1].totalTokens, 9)
     }
 
+    func testCodexTrack2PrimaryParserCarriesModelAcrossDistantTokenEventsViaFileScopedFallback() {
+        // Mirrors codex 0.125 session shape: model only appears in turn_context far above
+        // the token_count events, neither of which carries session_id. The 6-line
+        // nearbyModel window cannot reach turn_context, so the file-scoped fallback must
+        // tag every token event.
+        var lines: [String] = []
+        lines.append(#"{"timestamp":"2026-04-29T05:11:00Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-5.4"}}"#)
+        for index in 0..<40 {
+            lines.append(#"{"timestamp":"2026-04-29T05:11:0\#(index)Z","type":"response_item","payload":{"type":"message","role":"assistant"}}"#)
+        }
+        lines.append(#"{"timestamp":"2026-04-29T05:12:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150}}}}"#)
+        lines.append(#"{"timestamp":"2026-04-29T05:12:30Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"output_tokens":75,"total_tokens":275}}}}"#)
+
+        let output = CodexTrack2PrimaryParser.timelinePoints(
+            fromJSONL: lines.joined(separator: "\n"),
+            sourceFile: "sessions/2026/04/29/rollout-2026-04-29T05-11-00-019dd7a5.jsonl",
+            initialModel: nil
+        )
+
+        XCTAssertEqual(output.points.count, 2)
+        XCTAssertEqual(output.points[0].model, "gpt-5.4")
+        XCTAssertEqual(output.points[0].totalTokens, 150)
+        XCTAssertEqual(output.points[1].model, "gpt-5.4")
+        XCTAssertEqual(output.points[1].totalTokens, 275)
+        XCTAssertEqual(output.lastKnownModel, "gpt-5.4")
+    }
+
+    func testCodexTrack2PrimaryParserUsesInitialModelWhenIncrementalDeltaHasNoModelLine() {
+        // Simulates the second incremental cycle: only token_count events arrive, the
+        // turn_context that established the model is no longer in the parse window.
+        // initialModel from the persisted cursor must propagate to every point.
+        let jsonl = #"{"timestamp":"2026-04-29T06:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#
+
+        let output = CodexTrack2PrimaryParser.timelinePoints(
+            fromJSONL: jsonl,
+            sourceFile: "sessions/incremental.jsonl",
+            initialModel: "gpt-5.4"
+        )
+
+        XCTAssertEqual(output.points.count, 1)
+        XCTAssertEqual(output.points[0].model, "gpt-5.4")
+        XCTAssertEqual(output.lastKnownModel, "gpt-5.4")
+    }
+
     func testCodexTrack2PrimaryParserSkipsCorruptLineAndContinues() {
         let jsonl = """
         {"timestamp":"2026-01-02T03:04:05Z","session_id":"sess_a","model":"gpt-5","usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}
