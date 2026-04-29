@@ -378,6 +378,9 @@ struct ProviderCollectionRuntime: Sendable {
                     throw CollectionPipelineError.commandFailed(provider: provider)
                 }
             }
+        } else if provider == .codex,
+                  let oauthPayload = collectCodexTrack1OAuthRateLimitsOutput() {
+            output = oauthPayload
         } else {
             let executablePath = cliExecutablePath(provider: provider, settings: settings)
             guard let executablePath else {
@@ -844,6 +847,135 @@ struct ProviderCollectionRuntime: Sendable {
         let bufferMs = 5.0 * 60.0 * 1000.0
         let nowMs = now.timeIntervalSince1970 * 1000.0
         return nowMs >= (expiresAtValue - bufferMs)
+    }
+
+    private func collectCodexTrack1OAuthRateLimitsOutput(timeoutSec: TimeInterval = 5.0) -> Data? {
+        guard let credentials = codexOAuthCredentials() else {
+            return nil
+        }
+        let usageData: Data?
+        do {
+            usageData = try fetchCodexOAuthUsage(
+                accessToken: credentials.accessToken,
+                accountId: credentials.accountId,
+                timeoutSec: timeoutSec
+            )
+        } catch {
+            return nil
+        }
+        guard let usageData else {
+            return nil
+        }
+        return makeCodexOAuthUsageMethodBPayload(fromUsageResponseData: usageData)
+    }
+
+    private func codexOAuthCredentials() -> (accessToken: String, accountId: String?)? {
+        let url = homeDirectoryURL
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("auth.json")
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tokens = json["tokens"] as? [String: Any]
+        else {
+            return nil
+        }
+
+        let accessToken = (tokens["access_token"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard accessToken.isEmpty == false else {
+            return nil
+        }
+
+        let rawAccountId = (tokens["account_id"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let accountId = (rawAccountId?.isEmpty ?? true) ? nil : rawAccountId
+        return (accessToken, accountId)
+    }
+
+    private func fetchCodexOAuthUsage(accessToken: String, accountId: String?, timeoutSec: TimeInterval) throws -> Data? {
+        guard let url = URL(string: "https://chatgpt.com/backend-api/wham/usage") else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("token-meter", forHTTPHeaderField: "User-Agent")
+        if let accountId {
+            request.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
+        }
+
+        let result = try httpRunner.execute(request, timeoutSec: timeoutSec)
+        guard (200...299).contains(result.statusCode) else {
+            return nil
+        }
+
+        let trimmed = result.body.trimmingTrailingWhitespaceAndNewline()
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func makeCodexOAuthUsageMethodBPayload(fromUsageResponseData data: Data) -> Data? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let rateLimit = json["rate_limit"] as? [String: Any] ?? [:]
+
+        var windows: [[String: Any]] = []
+        let scopes: [(scopeKey: String, oauthKey: String)] = [
+            ("primary", "primary_window"),
+            ("secondary", "secondary_window"),
+        ]
+        for entry in scopes {
+            guard let scope = rateLimit[entry.oauthKey] as? [String: Any] else {
+                continue
+            }
+            let usedPercent = extractDoubleValue(fromJSONObject: scope, preferredKeys: ["usedPercent", "used_percent"])
+            let resetAt = extractResetDate(fromJSONObject: scope)
+            let durationSeconds = extractIntValue(
+                fromJSONObject: scope,
+                preferredKeys: ["limitWindowSeconds", "limit_window_seconds"]
+            )
+            let durationMins = durationSeconds.map { Int(Double($0) / 60.0) }
+
+            if usedPercent == nil, resetAt == nil {
+                continue
+            }
+
+            var window: [String: Any] = [
+                "windowId": codexWindowId(scopeKey: entry.scopeKey, durationMins: durationMins),
+                "scope": "codex_\(entry.scopeKey)",
+                "rawScopeLabel": "codex_\(entry.scopeKey)",
+            ]
+
+            if let usedPercent {
+                let used = clampPercent(usedPercent)
+                window["usedPercent"] = used
+                window["remainingPercent"] = clampPercent(100.0 - used)
+            }
+
+            if let resetAt {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                window["resetAt"] = formatter.string(from: resetAt)
+            }
+
+            windows.append(window)
+        }
+
+        guard windows.isEmpty == false else {
+            return nil
+        }
+
+        var payload: [String: Any] = ["windows": windows]
+        if let plan = (json["plan_type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           plan.isEmpty == false
+        {
+            payload["plan"] = plan
+        }
+
+        return try? JSONSerialization.data(withJSONObject: payload)
     }
 
     private func collectCodexTrack1FallbackOutput(executableURL: URL) throws -> Data? {
