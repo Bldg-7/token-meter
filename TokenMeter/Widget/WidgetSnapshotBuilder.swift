@@ -39,7 +39,8 @@ enum WidgetSnapshotBuilder {
                 observedAt: snapshot.observedAt,
                 plan: snapshot.plan.rawValue,
                 confidence: snapshot.confidence.rawValue,
-                windows: windows
+                windows: windows,
+                resetCreditsAvailable: snapshot.resetCreditsAvailable
             )
         }
 

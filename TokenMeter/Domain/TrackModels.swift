@@ -45,6 +45,9 @@ struct Track1Snapshot: Codable, Equatable {
     var windows: [Track1Window]
     var confidence: TrackConfidence
     var parserVersion: String
+    /// Banked rate-limit reset credits still available to spend (Codex,
+    /// June 2026 feature). nil when the provider/source does not report it.
+    var resetCreditsAvailable: Int? = nil
 }
 
 struct Track2TimelinePoint: Codable, Equatable {

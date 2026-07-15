@@ -12,6 +12,7 @@ struct WidgetSnapshot: Codable, Equatable {
         var plan: String
         var confidence: String
         var windows: [WindowSummary]
+        var resetCreditsAvailable: Int? = nil
 
         struct WindowSummary: Codable, Equatable {
             var windowId: String

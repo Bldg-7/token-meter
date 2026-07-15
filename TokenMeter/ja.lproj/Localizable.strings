@@ -5,6 +5,7 @@
 "content.badge.confidence.high" = "高";
 "content.badge.confidence.low" = "低";
 "content.badge.confidence.medium" = "中";
+"content.badge.reset_credits_format" = "リセット残り %d回";
 "content.badge.health.missing" = "未取得";
 "content.badge.health.ok" = "正常";
 "content.badge.health.stale" = "古い";
@@ -90,6 +91,7 @@
 "widget.quota_na" = "クォータ n/a";
 "widget.quota_session" = "クォータ (セッション)";
 "widget.quota_week" = "クォータ (週)";
+"widget.reset_credits_format" = "↻ %d";
 "widget.reset_in" = "リセットまで";
 "widget.resets" = "リセット";
 "widget.total" = "合計";

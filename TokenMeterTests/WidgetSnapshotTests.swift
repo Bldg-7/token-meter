@@ -511,4 +511,53 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(summary([emptyRolling, weekly]).primaryQuotaWindow?.windowId, "weekly")
         XCTAssertEqual(summary([emptyRolling]).primaryQuotaWindow?.windowId, "rolling_5h")
     }
+
+    func testWidgetSnapshotBuilderPassesThroughResetCreditsAvailable() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: true),
+            claude: ClaudeSettings(enabled: false)
+        )
+
+        let track1 = Track1Snapshot(
+            provider: .codex,
+            observedAt: now.addingTimeInterval(-60),
+            source: .cliMethodB,
+            plan: .pro,
+            windows: [
+                Track1Window(
+                    windowId: .weekly,
+                    usedPercent: 20,
+                    remainingPercent: 80,
+                    resetAt: nil,
+                    rawScopeLabel: "weekly"
+                ),
+            ],
+            confidence: .high,
+            parserVersion: "test",
+            resetCreditsAvailable: 2
+        )
+
+        let snapshot = WidgetSnapshotBuilder.make(
+            settings: settings,
+            track1Snapshots: [track1],
+            track2Points: [],
+            now: now
+        )
+
+        XCTAssertEqual(snapshot.track1.first?.resetCreditsAvailable, 2)
+
+        // Older persisted summaries without the field must keep decoding.
+        let legacyJSON = """
+        {
+          "provider": "codex",
+          "plan": "pro",
+          "confidence": "high",
+          "windows": []
+        }
+        """
+        let decoder = JSONDecoder()
+        let legacy = try decoder.decode(WidgetSnapshot.Track1Summary.self, from: Data(legacyJSON.utf8))
+        XCTAssertNil(legacy.resetCreditsAvailable)
+    }
 }

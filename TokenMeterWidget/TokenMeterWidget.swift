@@ -110,6 +110,12 @@ private struct TokenMeterProviderWidgetView: View {
 
                 Spacer(minLength: 8)
 
+                if let resetCredits = track1?.resetCreditsAvailable {
+                    Text(String(format: localizedString("widget.reset_credits_format"), resetCredits))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
                 if let plan = track1?.plan, plan.isEmpty == false {
                     Text(displayPlan(plan))
                         .font(.caption.weight(.semibold))
