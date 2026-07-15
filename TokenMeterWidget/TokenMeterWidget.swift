@@ -44,8 +44,11 @@ struct TokenMeterWidgetProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<TokenMeterWidgetEntry>) -> Void) {
         let now = Date()
         let snapshot = try? snapshotStore.read()
-        // Minute-spaced entries keep countdown labels fresh between snapshot reloads.
-        let entries = (0..<5).map { minute in
+        // Small/medium hand-format countdowns from entry.date, so they need
+        // minute-spaced entries to stay fresh between snapshot reloads; large
+        // uses self-updating relative text and one entry suffices.
+        let entryCount = context.family == .systemLarge ? 1 : 5
+        let entries = (0..<entryCount).map { minute in
             TokenMeterWidgetEntry(date: now.addingTimeInterval(TimeInterval(minute * 60)), snapshot: snapshot)
         }
         let next = Calendar.current.date(byAdding: .minute, value: 5, to: now) ?? now.addingTimeInterval(300)
@@ -147,7 +150,7 @@ private struct TokenMeterProviderWidgetView: View {
 
     @ViewBuilder
     private func smallQuotaSummary(track1: WidgetSnapshot.Track1Summary?) -> some View {
-        if let window = primaryQuotaWindow(track1: track1) {
+        if let window = track1?.primaryQuotaWindow {
             let remainingLabel = resetRemainingLabel(resetAt: window.resetAt)
             let used = effectiveUsedPercent(for: window)
 
@@ -170,7 +173,7 @@ private struct TokenMeterProviderWidgetView: View {
 
     @ViewBuilder
     private func mediumQuotaSummary(track1: WidgetSnapshot.Track1Summary?) -> some View {
-        if let window = primaryQuotaWindow(track1: track1) {
+        if let window = track1?.primaryQuotaWindow {
             let used = effectiveUsedPercent(for: window)
             let remainingLabel = resetRemainingLabel(resetAt: window.resetAt)
 
@@ -204,10 +207,6 @@ private struct TokenMeterProviderWidgetView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private func primaryQuotaWindow(track1: WidgetSnapshot.Track1Summary?) -> WidgetSnapshot.Track1Summary.WindowSummary? {
-        track1?.primaryQuotaWindow
     }
 
     private func resetRemainingLabel(resetAt: Date?) -> String {
@@ -289,12 +288,10 @@ private struct TokenMeterProviderWidgetView: View {
             return []
         }
 
-        var rows: [Track1QuotaRow] = []
-        if let rolling = windowSummary(id: "rolling_5h", in: windows) {
-            rows.append(Track1QuotaRow(title: quotaDisplayTitle(for: "rolling_5h"), window: rolling))
-        }
-        if let weekly = windowSummary(id: "weekly", in: windows) {
-            rows.append(Track1QuotaRow(title: quotaDisplayTitle(for: "weekly"), window: weekly))
+        var rows: [Track1QuotaRow] = WidgetSnapshot.Track1Summary.quotaWindowPreference.compactMap { id in
+            windowSummary(id: id, in: windows).map {
+                Track1QuotaRow(title: quotaDisplayTitle(for: id), window: $0)
+            }
         }
         if rows.isEmpty, let fallback = fallbackWindow(in: windows) {
             rows.append(Track1QuotaRow(title: quotaDisplayTitle(for: fallback.windowId), window: fallback))
@@ -313,8 +310,7 @@ private struct TokenMeterProviderWidgetView: View {
         in windows: [WidgetSnapshot.Track1Summary.WindowSummary]
     ) -> WidgetSnapshot.Track1Summary.WindowSummary? {
         windows.first {
-            $0.windowId != "rolling_5h"
-                && $0.windowId != "weekly"
+            WidgetSnapshot.Track1Summary.quotaWindowPreference.contains($0.windowId) == false
                 && $0.windowId != "model_specific"
                 && $0.usedPercent != nil
         }
@@ -421,6 +417,7 @@ private struct TokenMeterProviderWidgetView: View {
         let quotaOverlay = quotaOverlayBars(track2: track2)
         let bucketSeconds = inferredBucketSeconds(from: bars)
         let yAxis = yAxisLabels(from: bars)
+        let familyOrder = rankedFamilyOrder(from: bars)
 
         if bars.isEmpty {
             Text("widget.no_local_telemetry")
@@ -440,7 +437,8 @@ private struct TokenMeterProviderWidgetView: View {
                         DotStackedBarGraph(
                             bars: bars,
                             maxDots: dotRowCount,
-                            quotaOverlay: quotaOverlay
+                            quotaOverlay: quotaOverlay,
+                            familyOrder: familyOrder
                         )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .frame(height: dotGraphHeight)
@@ -454,15 +452,14 @@ private struct TokenMeterProviderWidgetView: View {
                 }
 
                 if family == .systemLarge {
-                    largeTrack2Legend(bars: bars)
+                    largeTrack2Legend(families: familyOrder)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func largeTrack2Legend(bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]) -> some View {
-        let families = legendFamilies(from: bars)
+    private func largeTrack2Legend(families: [String]) -> some View {
         if families.isEmpty == false {
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 82), spacing: 8)],
@@ -483,10 +480,6 @@ private struct TokenMeterProviderWidgetView: View {
                 }
             }
         }
-    }
-
-    private func legendFamilies(from bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]) -> [String] {
-        rankedFamilyOrder(from: bars)
     }
 
     private func timeWindowLabel(from bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]) -> String {
@@ -814,6 +807,7 @@ private struct DotStackedBarGraph: View {
     var bars: [WidgetSnapshot.Track2Summary.StackedSeriesBar]
     var maxDots: Int
     var quotaOverlay: [WidgetSnapshot.Track2Summary.QuotaOverlayBar]
+    var familyOrder: [String]
 
     private let dotFillRatio: CGFloat = 0.78
     private let minimumDotDiameter: CGFloat = 1.8
@@ -857,7 +851,7 @@ private struct DotStackedBarGraph: View {
 
                         context.fill(
                             Path(ellipseIn: rect),
-                            with: .color(color(for: column[row], familyOrder: layout.familyOrder))
+                            with: .color(color(for: column[row], familyOrder: familyOrder))
                         )
                     }
                 }
@@ -874,8 +868,6 @@ private struct DotStackedBarGraph: View {
         let maxTotal = bars
             .map { $0.segments.map(\.totalTokens).reduce(0, +) }
             .max() ?? 0
-
-        let familyOrder = rankedFamilyOrder(from: bars)
 
         var columns: [[String?]] = []
         columns.reserveCapacity(bars.count)
@@ -918,7 +910,7 @@ private struct DotStackedBarGraph: View {
             columns.append(column)
         }
 
-        return DotLayout(familyOrder: familyOrder, columns: columns)
+        return DotLayout(columns: columns)
     }
 
     private func color(for family: String?, familyOrder: [String]) -> Color {
@@ -1105,7 +1097,6 @@ private struct DotStackedBarGraph: View {
     }
 
     private struct DotLayout {
-        var familyOrder: [String]
         var columns: [[String?]]
     }
 

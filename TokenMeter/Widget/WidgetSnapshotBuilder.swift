@@ -242,23 +242,6 @@ enum WidgetSnapshotBuilder {
         let firstBucketStart = endBucketStart.addingTimeInterval(TimeInterval(-bucketSeconds * (bucketCount - 1)))
         let endExclusive = endBucketStart.addingTimeInterval(TimeInterval(bucketSeconds))
 
-        let overlayWindowId = overlayWindowId(for: snapshots)
-
-        let observations = snapshots
-            .compactMap { snapshot -> QuotaWindowObservation? in
-                guard let overlayWindowId,
-                      let window = snapshot.windows.first(where: { $0.windowId == overlayWindowId })
-                else {
-                    return nil
-                }
-                return QuotaWindowObservation(
-                    observedAt: snapshot.observedAt,
-                    usedPercent: clampedPercent(window.usedPercent),
-                    resetAt: window.resetAt
-                )
-            }
-            .sorted { $0.observedAt < $1.observedAt }
-
         var out: [WidgetSnapshot.Track2Summary.QuotaOverlayBar] = []
         out.reserveCapacity(bucketCount)
         for offset in 0..<bucketCount {
@@ -272,6 +255,23 @@ enum WidgetSnapshotBuilder {
                 )
             )
         }
+
+        guard let overlayWindowId = overlayWindowId(for: snapshots) else {
+            return out
+        }
+
+        let observations = snapshots
+            .compactMap { snapshot -> QuotaWindowObservation? in
+                guard let window = snapshot.windows.first(where: { $0.windowId == overlayWindowId }) else {
+                    return nil
+                }
+                return QuotaWindowObservation(
+                    observedAt: snapshot.observedAt,
+                    usedPercent: clampedPercent(window.usedPercent),
+                    resetAt: window.resetAt
+                )
+            }
+            .sorted { $0.observedAt < $1.observedAt }
 
         guard observations.isEmpty == false else {
             return out
@@ -349,17 +349,20 @@ enum WidgetSnapshotBuilder {
         return out
     }
 
-    /// Codex dropped the rolling 5h limit in July 2026; when the most recent
-    /// snapshot no longer carries that window, overlay the weekly window instead.
+    /// Window to overlay on the usage graph: scan snapshots newest-first for
+    /// the highest-preference window that carries a usable percent, so a
+    /// single degraded snapshot (e.g. a plan-only fallback with a bare or
+    /// missing window) cannot blank or flip the overlay. Codex dropped the
+    /// rolling 5h limit in July 2026, leaving weekly-only data.
     private static func overlayWindowId(for snapshots: [Track1Snapshot]) -> Track1WindowId? {
-        guard let latest = snapshots.max(by: { $0.observedAt < $1.observedAt }) else {
-            return nil
-        }
-        if latest.windows.contains(where: { $0.windowId == .rolling5h }) {
-            return .rolling5h
-        }
-        if latest.windows.contains(where: { $0.windowId == .weekly }) {
-            return .weekly
+        let preference = WidgetSnapshot.Track1Summary.quotaWindowPreference
+            .compactMap(Track1WindowId.init(rawValue:))
+        for snapshot in snapshots.sorted(by: { $0.observedAt > $1.observedAt }) {
+            for windowId in preference {
+                if snapshot.windows.contains(where: { $0.windowId == windowId && $0.usedPercent != nil }) {
+                    return windowId
+                }
+            }
         }
         return nil
     }

@@ -408,6 +408,63 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertFalse(observedPercents.contains(40))
     }
 
+    func testQuotaOverlayIgnoresDegradedLatestSnapshotWithoutUsablePercent() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: true),
+            claude: ClaudeSettings(enabled: false),
+            widgetTrack2TimeScale: .hours3
+        )
+
+        let healthy = Track1Snapshot(
+            provider: .codex,
+            observedAt: now.addingTimeInterval(-40 * 60),
+            source: .cliMethodB,
+            plan: .pro,
+            windows: [
+                Track1Window(
+                    windowId: .rolling5h,
+                    usedPercent: 55,
+                    remainingPercent: 45,
+                    resetAt: now.addingTimeInterval(2 * 60 * 60),
+                    rawScopeLabel: "rolling_5h"
+                ),
+            ],
+            confidence: .high,
+            parserVersion: "test"
+        )
+
+        // Plan-only fallback snapshot: a bare weekly window with no percent.
+        let degradedLatest = Track1Snapshot(
+            provider: .codex,
+            observedAt: now.addingTimeInterval(-5 * 60),
+            source: .cliMethodB,
+            plan: .pro,
+            windows: [
+                Track1Window(
+                    windowId: .weekly,
+                    usedPercent: nil,
+                    remainingPercent: nil,
+                    resetAt: nil,
+                    rawScopeLabel: "weekly"
+                ),
+            ],
+            confidence: .medium,
+            parserVersion: "test"
+        )
+
+        let snapshot = WidgetSnapshotBuilder.make(
+            settings: settings,
+            track1Snapshots: [healthy, degradedLatest],
+            track2Points: [],
+            now: now
+        )
+
+        let codex = snapshot.track2.first(where: { $0.provider == "codex" })
+        let observedPercents = codex?.quotaOverlay5h.compactMap(\.usedPercent) ?? []
+        XCTAssertTrue(observedPercents.contains(55))
+    }
+
     func testTrack1SummaryPrimaryQuotaWindowPrefersRolling5hThenWeekly() {
         let rolling = WidgetSnapshot.Track1Summary.WindowSummary(
             windowId: "rolling_5h",
@@ -441,5 +498,17 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(summary([weekly, rolling]).primaryQuotaWindow?.windowId, "rolling_5h")
         XCTAssertEqual(summary([session, weekly]).primaryQuotaWindow?.windowId, "weekly")
         XCTAssertNil(summary([session]).primaryQuotaWindow)
+
+        // A degraded rolling_5h stub with no percents must not shadow a
+        // populated weekly window, but is still returned when nothing better
+        // exists.
+        let emptyRolling = WidgetSnapshot.Track1Summary.WindowSummary(
+            windowId: "rolling_5h",
+            usedPercent: nil,
+            remainingPercent: nil,
+            resetAt: nil
+        )
+        XCTAssertEqual(summary([emptyRolling, weekly]).primaryQuotaWindow?.windowId, "weekly")
+        XCTAssertEqual(summary([emptyRolling]).primaryQuotaWindow?.windowId, "rolling_5h")
     }
 }
