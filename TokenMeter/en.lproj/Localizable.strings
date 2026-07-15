@@ -86,7 +86,6 @@
 "widget.now" = "now";
 "widget.open_app_refresh" = "Open the app to refresh Track 1 and Track 2";
 "widget.quota_5h" = "quota (5h)";
-"widget.quota_5h_na" = "quota (5h) n/a";
 "widget.quota_model_specific" = "quota (model)";
 "widget.quota_na" = "Quota n/a";
 "widget.quota_session" = "quota (session)";

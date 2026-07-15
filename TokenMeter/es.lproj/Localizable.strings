@@ -86,7 +86,6 @@
 "widget.now" = "ahora";
 "widget.open_app_refresh" = "Abre la app para actualizar Track 1 y Track 2";
 "widget.quota_5h" = "cuota (5h)";
-"widget.quota_5h_na" = "cuota (5h) n/a";
 "widget.quota_model_specific" = "cuota (modelo)";
 "widget.quota_na" = "Cuota n/a";
 "widget.quota_session" = "cuota (sesión)";

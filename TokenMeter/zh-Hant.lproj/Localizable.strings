@@ -86,7 +86,6 @@
 "widget.now" = "現在";
 "widget.open_app_refresh" = "開啟 App 以重新整理 Track 1 與 Track 2";
 "widget.quota_5h" = "配額 (5h)";
-"widget.quota_5h_na" = "配額 (5h) n/a";
 "widget.quota_model_specific" = "配額 (模型)";
 "widget.quota_na" = "配額 n/a";
 "widget.quota_session" = "配額 (工作階段)";

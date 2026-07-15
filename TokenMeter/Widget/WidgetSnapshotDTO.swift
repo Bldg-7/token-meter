@@ -111,3 +111,13 @@ struct WidgetSnapshot: Codable, Equatable {
         }
     }
 }
+
+extension WidgetSnapshot.Track1Summary {
+    /// Quota window for compact widget families. Codex stopped reporting a
+    /// rolling 5h window in July 2026 (weekly-only limits), so fall back to
+    /// the weekly window when the 5h window is absent.
+    var primaryQuotaWindow: WindowSummary? {
+        windows.first(where: { $0.windowId == "rolling_5h" })
+            ?? windows.first(where: { $0.windowId == "weekly" })
+    }
+}

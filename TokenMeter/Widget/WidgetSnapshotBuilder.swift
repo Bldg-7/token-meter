@@ -2,7 +2,6 @@ import Foundation
 
 enum WidgetSnapshotBuilder {
     private static let graphBucketCount = 96
-    private static let rolling5hWindowId = Track1WindowId.rolling5h.rawValue
 
     static func make(
         settings: AppSettings,
@@ -243,12 +242,16 @@ enum WidgetSnapshotBuilder {
         let firstBucketStart = endBucketStart.addingTimeInterval(TimeInterval(-bucketSeconds * (bucketCount - 1)))
         let endExclusive = endBucketStart.addingTimeInterval(TimeInterval(bucketSeconds))
 
-        let rollingSnapshots = snapshots
-            .compactMap { snapshot -> RollingWindowObservation? in
-                guard let window = snapshot.windows.first(where: { $0.windowId.rawValue == rolling5hWindowId }) else {
+        let overlayWindowId = overlayWindowId(for: snapshots)
+
+        let observations = snapshots
+            .compactMap { snapshot -> QuotaWindowObservation? in
+                guard let overlayWindowId,
+                      let window = snapshot.windows.first(where: { $0.windowId == overlayWindowId })
+                else {
                     return nil
                 }
-                return RollingWindowObservation(
+                return QuotaWindowObservation(
                     observedAt: snapshot.observedAt,
                     usedPercent: clampedPercent(window.usedPercent),
                     resetAt: window.resetAt
@@ -270,12 +273,12 @@ enum WidgetSnapshotBuilder {
             )
         }
 
-        guard rollingSnapshots.isEmpty == false else {
+        guard observations.isEmpty == false else {
             return out
         }
 
         var expectedIntervalSeconds = 120.0
-        let intervals = zip(rollingSnapshots, rollingSnapshots.dropFirst()).map { next in
+        let intervals = zip(observations, observations.dropFirst()).map { next in
             next.1.observedAt.timeIntervalSince(next.0.observedAt)
         }.filter { $0 > 0 }
         if intervals.isEmpty == false {
@@ -285,7 +288,7 @@ enum WidgetSnapshotBuilder {
         }
         let gapThresholdSeconds = max(6 * 60.0, expectedIntervalSeconds * 3.0)
 
-        for observation in rollingSnapshots {
+        for observation in observations {
             guard observation.observedAt >= firstBucketStart,
                   observation.observedAt < endExclusive
             else {
@@ -298,7 +301,7 @@ enum WidgetSnapshotBuilder {
             }
         }
 
-        for pair in zip(rollingSnapshots, rollingSnapshots.dropFirst()) {
+        for pair in zip(observations, observations.dropFirst()) {
             let previous = pair.0
             let current = pair.1
             let delta = current.observedAt.timeIntervalSince(previous.observedAt)
@@ -346,6 +349,21 @@ enum WidgetSnapshotBuilder {
         return out
     }
 
+    /// Codex dropped the rolling 5h limit in July 2026; when the most recent
+    /// snapshot no longer carries that window, overlay the weekly window instead.
+    private static func overlayWindowId(for snapshots: [Track1Snapshot]) -> Track1WindowId? {
+        guard let latest = snapshots.max(by: { $0.observedAt < $1.observedAt }) else {
+            return nil
+        }
+        if latest.windows.contains(where: { $0.windowId == .rolling5h }) {
+            return .rolling5h
+        }
+        if latest.windows.contains(where: { $0.windowId == .weekly }) {
+            return .weekly
+        }
+        return nil
+    }
+
     private static func floorToBucketBoundary(_ date: Date, bucketSeconds: Int) -> Date {
         guard bucketSeconds > 0 else { return date }
         let epoch = Int(date.timeIntervalSince1970)
@@ -375,7 +393,7 @@ enum WidgetSnapshotBuilder {
         return index
     }
 
-    private static func detectedResetTime(previous: RollingWindowObservation, current: RollingWindowObservation) -> Date? {
+    private static func detectedResetTime(previous: QuotaWindowObservation, current: QuotaWindowObservation) -> Date? {
         if let prevReset = previous.resetAt,
            current.observedAt >= prevReset
         {
@@ -394,7 +412,7 @@ enum WidgetSnapshotBuilder {
         return nil
     }
 
-    private struct RollingWindowObservation {
+    private struct QuotaWindowObservation {
         let observedAt: Date
         let usedPercent: Double?
         let resetAt: Date?
