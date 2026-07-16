@@ -1956,7 +1956,7 @@ struct ProviderCollectionRuntime: Sendable {
 
         let modelLower = model.lowercased()
         let mappedProvider: ProviderId
-        if modelLower.contains("codex") {
+        if modelLower.contains("codex") || modelLower.contains("gpt") {
             mappedProvider = .codex
         } else if modelLower.contains("claude") {
             mappedProvider = .claude
@@ -1964,6 +1964,8 @@ struct ProviderCollectionRuntime: Sendable {
             let providerHint = row.providerId?.lowercased()
             if providerHint == "anthropic" {
                 mappedProvider = .claude
+            } else if providerHint == "openai" {
+                mappedProvider = .codex
             } else {
                 return nil
             }

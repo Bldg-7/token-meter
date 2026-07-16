@@ -1086,6 +1086,49 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(claudePoints[0].totalTokens, 15)
     }
 
+    func testOpenCodeTrack2MapsPlainGPTModelsToCodex() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        try writeOpenCodeMessage(
+            homeDirectoryURL: homeDir,
+            sessionID: "ses_opencode_gpt",
+            messageID: "msg_assistant_gpt",
+            payload: [
+                "role": "assistant",
+                "time": ["created": 1_770_100_000_000],
+                "providerID": "openai",
+                "modelID": "gpt-5.6",
+                "tokens": ["input": 20, "output": 7],
+            ]
+        )
+
+        // GPT routed through an aggregator: no "openai" provider hint, but the
+        // model id itself identifies the family.
+        try writeOpenCodeMessage(
+            homeDirectoryURL: homeDir,
+            sessionID: "ses_opencode_openrouter_gpt",
+            messageID: "msg_assistant_openrouter_gpt",
+            payload: [
+                "role": "assistant",
+                "time": ["created": 1_770_100_001_000],
+                "providerID": "openrouter",
+                "modelID": "openai/gpt-5.6",
+                "tokens": ["input": 5, "output": 5],
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let codexPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(codexPoints.count, 2)
+        XCTAssertEqual(codexPoints.compactMap(\.totalTokens).sorted(), [10, 27])
+
+        let claudePoints = try runtime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(claudePoints, [])
+    }
+
     func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
