@@ -1777,11 +1777,24 @@ final class TokenMeterTests: XCTestCase {
         let fresh = makePoint(timestamp: newest.addingTimeInterval(-60), sessionId: "fresh")
         let latest = makePoint(timestamp: newest, sessionId: "latest")
 
-        let persisted = try await runtime.persistTrack2Points([stale, fresh, latest], store: track2Store)
+        let persisted = try await runtime.persistTrack2Points([stale, fresh, latest], store: track2Store, now: newest)
         XCTAssertEqual(persisted, 3)
 
         let retained = try await track2Store.loadAll()
         XCTAssertEqual(retained.map(\.sessionId), ["fresh", "latest"])
+
+        // A far-future junk point (e.g. a millisecond epoch read as seconds)
+        // must not anchor the retention window or prune real history, and
+        // must itself be dropped.
+        let junk = makePoint(
+            timestamp: Date(timeIntervalSince1970: 1_770_100_000_000),
+            sessionId: "junk"
+        )
+        let junkPersisted = try await runtime.persistTrack2Points([junk], store: track2Store, now: newest)
+        XCTAssertEqual(junkPersisted, 0)
+
+        let afterJunk = try await track2Store.loadAll()
+        XCTAssertEqual(afterJunk.map(\.sessionId), ["fresh", "latest"])
     }
 
     func testTrack2StoreInsertReadIsolation() async throws {

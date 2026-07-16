@@ -419,11 +419,19 @@ struct ProviderCollectionRuntime: Sendable {
     /// Charts consume at most 24h of local telemetry; cap retained history so
     /// track2.json cannot grow without bound (a 60MB+ store made every
     /// collection cycle re-encode tens of MB and overrun its timeout).
-    /// Anchored to the newest merged point rather than wall clock so replayed
-    /// fixtures and idle periods do not prune valid history.
+    /// Anchored to the newest plausible point rather than wall clock so
+    /// replayed fixtures and idle periods do not prune valid history.
     private static let track2RetentionInterval: TimeInterval = 30 * 24 * 60 * 60
+    /// Corrupt sources can yield far-future timestamps (e.g. millisecond
+    /// epochs read as seconds); such points must neither anchor the retention
+    /// window — which would prune all real history — nor be kept themselves.
+    private static let track2FutureToleranceInterval: TimeInterval = 48 * 60 * 60
 
-    func persistTrack2Points(_ points: [Track2TimelinePoint], store: Track2Store) async throws -> Int {
+    func persistTrack2Points(
+        _ points: [Track2TimelinePoint],
+        store: Track2Store,
+        now: Date = Date()
+    ) async throws -> Int {
         guard points.isEmpty == false else {
             return 0
         }
@@ -433,17 +441,24 @@ struct ProviderCollectionRuntime: Sendable {
             .sorted(by: { $0.timestamp < $1.timestamp })
         let added = merged.count - existing.count
 
-        guard let newest = merged.last?.timestamp else {
+        let futureCutoff = now.addingTimeInterval(Self.track2FutureToleranceInterval)
+        let plausible = merged.filter { $0.timestamp <= futureCutoff }
+
+        let retained: [Track2TimelinePoint]
+        if let newest = plausible.last?.timestamp {
+            let retentionStart = newest.addingTimeInterval(-Self.track2RetentionInterval)
+            retained = plausible.filter { $0.timestamp >= retentionStart }
+        } else {
+            retained = []
+        }
+
+        guard retained != existing else {
             return 0
         }
-        let retentionStart = newest.addingTimeInterval(-Self.track2RetentionInterval)
-        let retained = merged.filter { $0.timestamp >= retentionStart }
-
-        if retained != existing {
-            try await store.replaceAll(retained)
-        }
-
-        return max(0, added)
+        try await store.replaceAll(retained)
+        // Report at least one change when only pruning rewrote the store, so
+        // callers gating display refreshes on this count still update.
+        return max(1, added)
     }
 
     private func cliExecutablePath(provider: ProviderId, settings: AppSettings) -> String? {
