@@ -21,12 +21,24 @@ enum Track2ModelClassifier {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// GPT tier variants (GPT-5.6 era) that identify distinct models the way
+    /// Opus/Sonnet/Haiku do for Claude; suffixes like "-codex" or "-turbo"
+    /// stay merged into the base family.
+    private static let gptVariants: [(token: String, label: String)] = [
+        ("sol", "Sol"),
+        ("terra", "Terra"),
+        ("luna", "Luna"),
+    ]
+
     private static func codexFamily(from model: String) -> String {
         if model.contains("gpt-3.5") {
             return "GPT 3.5"
         }
 
         if let version = majorMinorVersion(after: "gpt-", in: model) {
+            if let variant = gptVariant(in: model) {
+                return "GPT \(version) \(variant)"
+            }
             return "GPT \(version)"
         }
 
@@ -35,6 +47,14 @@ enum Track2ModelClassifier {
         }
 
         return "Unknown"
+    }
+
+    private static func gptVariant(in model: String) -> String? {
+        let tokens = Set(model.split(whereSeparator: { $0.isLetter == false }).map(String.init))
+        for variant in gptVariants where tokens.contains(variant.token) {
+            return variant.label
+        }
+        return nil
     }
 
     private static func claudeFamily(from model: String) -> String {

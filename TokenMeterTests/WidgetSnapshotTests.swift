@@ -220,6 +220,18 @@ final class WidgetSnapshotTests: XCTestCase {
             "GPT 5.2"
         )
         XCTAssertEqual(
+            Track2ModelClassifier.familyLabel(provider: .codex, model: "gpt-5.6-sol"),
+            "GPT 5.6 Sol"
+        )
+        XCTAssertEqual(
+            Track2ModelClassifier.familyLabel(provider: .codex, model: "openai/gpt-5.6-terra"),
+            "GPT 5.6 Terra"
+        )
+        XCTAssertEqual(
+            Track2ModelClassifier.familyLabel(provider: .codex, model: "gpt-5.6-luna"),
+            "GPT 5.6 Luna"
+        )
+        XCTAssertEqual(
             Track2ModelClassifier.familyLabel(provider: .claude, model: "claude-opus-4-6-20260101"),
             "Opus 4.6"
         )
