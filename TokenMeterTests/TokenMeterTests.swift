@@ -1749,6 +1749,41 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(snapshot.confidence, .medium)
     }
 
+    func testPersistTrack2PointsPrunesHistoryBeyondRetention() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: dir)
+
+        let newest = Date(timeIntervalSince1970: 1_770_100_000)
+
+        func makePoint(timestamp: Date, sessionId: String) -> Track2TimelinePoint {
+            Track2TimelinePoint(
+                provider: .codex,
+                timestamp: timestamp,
+                sessionId: sessionId,
+                model: "gpt-5",
+                promptTokens: nil,
+                completionTokens: nil,
+                totalTokens: 10,
+                sourceFile: "test.jsonl",
+                confidence: .high,
+                parserVersion: "test"
+            )
+        }
+
+        let stale = makePoint(timestamp: newest.addingTimeInterval(-40 * 24 * 60 * 60), sessionId: "stale")
+        let fresh = makePoint(timestamp: newest.addingTimeInterval(-60), sessionId: "fresh")
+        let latest = makePoint(timestamp: newest, sessionId: "latest")
+
+        let persisted = try await runtime.persistTrack2Points([stale, fresh, latest], store: track2Store)
+        XCTAssertEqual(persisted, 3)
+
+        let retained = try await track2Store.loadAll()
+        XCTAssertEqual(retained.map(\.sessionId), ["fresh", "latest"])
+    }
+
     func testTrack2StoreInsertReadIsolation() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

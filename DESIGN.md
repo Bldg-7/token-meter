@@ -89,7 +89,9 @@ single quota window prefer `rolling_5h` and fall back to `weekly`.
 
 ### 4.2 Track 2 (Local Telemetry)
 
-Track 2 only contains local token observations for charting.
+Track 2 only contains local token observations for charting. The persisted
+store keeps a rolling 30-day window (anchored to the newest point); older
+points are pruned on persist so the store stays bounded.
 
 Required fields:
 

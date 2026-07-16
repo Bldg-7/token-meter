@@ -13,8 +13,10 @@ actor Track2Store {
     }
 
     init(pointsURLOverride: URL? = nil) {
+        // Compact encoding: this file is machine-read only and rewritten on
+        // every collection cycle, so pretty-printing roughly doubles the
+        // recurring encode/IO cost for nothing.
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         self.encoder = encoder
 

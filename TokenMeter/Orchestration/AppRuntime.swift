@@ -416,6 +416,13 @@ struct ProviderCollectionRuntime: Sendable {
         }
     }
 
+    /// Charts consume at most 24h of local telemetry; cap retained history so
+    /// track2.json cannot grow without bound (a 60MB+ store made every
+    /// collection cycle re-encode tens of MB and overrun its timeout).
+    /// Anchored to the newest merged point rather than wall clock so replayed
+    /// fixtures and idle periods do not prune valid history.
+    private static let track2RetentionInterval: TimeInterval = 30 * 24 * 60 * 60
+
     func persistTrack2Points(_ points: [Track2TimelinePoint], store: Track2Store) async throws -> Int {
         guard points.isEmpty == false else {
             return 0
@@ -424,13 +431,19 @@ struct ProviderCollectionRuntime: Sendable {
         let existing = try await store.loadAll()
         let merged = deduplicatedTrack2Points(existing + points)
             .sorted(by: { $0.timestamp < $1.timestamp })
+        let added = merged.count - existing.count
 
-        if merged != existing {
-            try await store.replaceAll(merged)
-            return merged.count - existing.count
+        guard let newest = merged.last?.timestamp else {
+            return 0
+        }
+        let retentionStart = newest.addingTimeInterval(-Self.track2RetentionInterval)
+        let retained = merged.filter { $0.timestamp >= retentionStart }
+
+        if retained != existing {
+            try await store.replaceAll(retained)
         }
 
-        return 0
+        return max(0, added)
     }
 
     private func cliExecutablePath(provider: ProviderId, settings: AppSettings) -> String? {
