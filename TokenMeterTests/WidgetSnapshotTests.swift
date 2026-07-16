@@ -336,4 +336,228 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertTrue(codex?.quotaOverlay5h.contains(where: \.isReset) == true)
         XCTAssertTrue(codex?.quotaOverlay5h.contains(where: \.isGap) == true)
     }
+
+    func testQuotaOverlayFallsBackToWeeklyWindowWhenLatestSnapshotHasNoRolling5h() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: true),
+            claude: ClaudeSettings(enabled: false),
+            widgetTrack2TimeScale: .hours3
+        )
+
+        let snapshots: [Track1Snapshot] = [
+            // Pre-transition snapshot still reporting both windows.
+            Track1Snapshot(
+                provider: .codex,
+                observedAt: now.addingTimeInterval(-100 * 60),
+                source: .cliMethodB,
+                plan: .pro,
+                windows: [
+                    Track1Window(
+                        windowId: .rolling5h,
+                        usedPercent: 40,
+                        remainingPercent: 60,
+                        resetAt: now.addingTimeInterval(2 * 60 * 60),
+                        rawScopeLabel: "rolling_5h"
+                    ),
+                    Track1Window(
+                        windowId: .weekly,
+                        usedPercent: 31,
+                        remainingPercent: 69,
+                        resetAt: now.addingTimeInterval(3 * 24 * 60 * 60),
+                        rawScopeLabel: "weekly"
+                    ),
+                ],
+                confidence: .high,
+                parserVersion: "test"
+            ),
+            // Weekly-only snapshot after Codex dropped the 5h limit.
+            Track1Snapshot(
+                provider: .codex,
+                observedAt: now.addingTimeInterval(-30 * 60),
+                source: .cliMethodB,
+                plan: .pro,
+                windows: [
+                    Track1Window(
+                        windowId: .weekly,
+                        usedPercent: 33,
+                        remainingPercent: 67,
+                        resetAt: now.addingTimeInterval(3 * 24 * 60 * 60),
+                        rawScopeLabel: "weekly"
+                    ),
+                ],
+                confidence: .high,
+                parserVersion: "test"
+            ),
+        ]
+
+        let snapshot = WidgetSnapshotBuilder.make(
+            settings: settings,
+            track1Snapshots: snapshots,
+            track2Points: [],
+            now: now
+        )
+
+        let codex = snapshot.track2.first(where: { $0.provider == "codex" })
+        XCTAssertNotNil(codex)
+        XCTAssertEqual(codex?.quotaOverlay5h.count, 96)
+
+        let observedPercents = codex?.quotaOverlay5h.compactMap(\.usedPercent) ?? []
+        XCTAssertTrue(observedPercents.contains(31))
+        XCTAssertTrue(observedPercents.contains(33))
+        XCTAssertFalse(observedPercents.contains(40))
+    }
+
+    func testQuotaOverlayIgnoresDegradedLatestSnapshotWithoutUsablePercent() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: true),
+            claude: ClaudeSettings(enabled: false),
+            widgetTrack2TimeScale: .hours3
+        )
+
+        let healthy = Track1Snapshot(
+            provider: .codex,
+            observedAt: now.addingTimeInterval(-40 * 60),
+            source: .cliMethodB,
+            plan: .pro,
+            windows: [
+                Track1Window(
+                    windowId: .rolling5h,
+                    usedPercent: 55,
+                    remainingPercent: 45,
+                    resetAt: now.addingTimeInterval(2 * 60 * 60),
+                    rawScopeLabel: "rolling_5h"
+                ),
+            ],
+            confidence: .high,
+            parserVersion: "test"
+        )
+
+        // Plan-only fallback snapshot: a bare weekly window with no percent.
+        let degradedLatest = Track1Snapshot(
+            provider: .codex,
+            observedAt: now.addingTimeInterval(-5 * 60),
+            source: .cliMethodB,
+            plan: .pro,
+            windows: [
+                Track1Window(
+                    windowId: .weekly,
+                    usedPercent: nil,
+                    remainingPercent: nil,
+                    resetAt: nil,
+                    rawScopeLabel: "weekly"
+                ),
+            ],
+            confidence: .medium,
+            parserVersion: "test"
+        )
+
+        let snapshot = WidgetSnapshotBuilder.make(
+            settings: settings,
+            track1Snapshots: [healthy, degradedLatest],
+            track2Points: [],
+            now: now
+        )
+
+        let codex = snapshot.track2.first(where: { $0.provider == "codex" })
+        let observedPercents = codex?.quotaOverlay5h.compactMap(\.usedPercent) ?? []
+        XCTAssertTrue(observedPercents.contains(55))
+    }
+
+    func testTrack1SummaryPrimaryQuotaWindowPrefersRolling5hThenWeekly() {
+        let rolling = WidgetSnapshot.Track1Summary.WindowSummary(
+            windowId: "rolling_5h",
+            usedPercent: 10,
+            remainingPercent: 90,
+            resetAt: nil
+        )
+        let weekly = WidgetSnapshot.Track1Summary.WindowSummary(
+            windowId: "weekly",
+            usedPercent: 20,
+            remainingPercent: 80,
+            resetAt: nil
+        )
+        let session = WidgetSnapshot.Track1Summary.WindowSummary(
+            windowId: "session",
+            usedPercent: 5,
+            remainingPercent: 95,
+            resetAt: nil
+        )
+
+        func summary(_ windows: [WidgetSnapshot.Track1Summary.WindowSummary]) -> WidgetSnapshot.Track1Summary {
+            WidgetSnapshot.Track1Summary(
+                provider: "codex",
+                observedAt: nil,
+                plan: "pro",
+                confidence: "high",
+                windows: windows
+            )
+        }
+
+        XCTAssertEqual(summary([weekly, rolling]).primaryQuotaWindow?.windowId, "rolling_5h")
+        XCTAssertEqual(summary([session, weekly]).primaryQuotaWindow?.windowId, "weekly")
+        XCTAssertNil(summary([session]).primaryQuotaWindow)
+
+        // A degraded rolling_5h stub with no percents must not shadow a
+        // populated weekly window, but is still returned when nothing better
+        // exists.
+        let emptyRolling = WidgetSnapshot.Track1Summary.WindowSummary(
+            windowId: "rolling_5h",
+            usedPercent: nil,
+            remainingPercent: nil,
+            resetAt: nil
+        )
+        XCTAssertEqual(summary([emptyRolling, weekly]).primaryQuotaWindow?.windowId, "weekly")
+        XCTAssertEqual(summary([emptyRolling]).primaryQuotaWindow?.windowId, "rolling_5h")
+    }
+
+    func testWidgetSnapshotBuilderPassesThroughResetCreditsAvailable() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: true),
+            claude: ClaudeSettings(enabled: false)
+        )
+
+        let track1 = Track1Snapshot(
+            provider: .codex,
+            observedAt: now.addingTimeInterval(-60),
+            source: .cliMethodB,
+            plan: .pro,
+            windows: [
+                Track1Window(
+                    windowId: .weekly,
+                    usedPercent: 20,
+                    remainingPercent: 80,
+                    resetAt: nil,
+                    rawScopeLabel: "weekly"
+                ),
+            ],
+            confidence: .high,
+            parserVersion: "test",
+            resetCreditsAvailable: 2
+        )
+
+        let snapshot = WidgetSnapshotBuilder.make(
+            settings: settings,
+            track1Snapshots: [track1],
+            track2Points: [],
+            now: now
+        )
+
+        XCTAssertEqual(snapshot.track1.first?.resetCreditsAvailable, 2)
+
+        // Older persisted summaries without the field must keep decoding.
+        let legacyJSON = """
+        {
+          "provider": "codex",
+          "plan": "pro",
+          "confidence": "high",
+          "windows": []
+        }
+        """
+        let decoder = JSONDecoder()
+        let legacy = try decoder.decode(WidgetSnapshot.Track1Summary.self, from: Data(legacyJSON.utf8))
+        XCTAssertNil(legacy.resetCreditsAvailable)
+    }
 }

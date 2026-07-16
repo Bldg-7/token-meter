@@ -12,6 +12,7 @@ struct WidgetSnapshot: Codable, Equatable {
         var plan: String
         var confidence: String
         var windows: [WindowSummary]
+        var resetCreditsAvailable: Int? = nil
 
         struct WindowSummary: Codable, Equatable {
             var windowId: String
@@ -109,5 +110,33 @@ struct WidgetSnapshot: Codable, Equatable {
             stackedSeries24h = try container.decodeIfPresent([StackedSeriesBar].self, forKey: .stackedSeries24h) ?? []
             quotaOverlay5h = try container.decodeIfPresent([QuotaOverlayBar].self, forKey: .quotaOverlay5h) ?? []
         }
+    }
+}
+
+extension WidgetSnapshot.Track1Summary {
+    /// Preference order for surfaces that show a single quota window. Codex
+    /// stopped reporting a rolling 5h window in July 2026 (weekly-only
+    /// limits), so weekly is the fallback.
+    static let quotaWindowPreference = ["rolling_5h", "weekly"]
+
+    /// Quota window for compact widget families: the highest-preference
+    /// window carrying usable percent data. Degraded snapshots can list a
+    /// window with all-nil fields, which must not shadow a populated
+    /// lower-preference window; a percent-less window is only returned when
+    /// no preferred window has data (it may still offer a reset countdown).
+    var primaryQuotaWindow: WindowSummary? {
+        for windowId in Self.quotaWindowPreference {
+            if let window = windows.first(where: {
+                $0.windowId == windowId && ($0.usedPercent != nil || $0.remainingPercent != nil)
+            }) {
+                return window
+            }
+        }
+        for windowId in Self.quotaWindowPreference {
+            if let window = windows.first(where: { $0.windowId == windowId }) {
+                return window
+            }
+        }
+        return nil
     }
 }

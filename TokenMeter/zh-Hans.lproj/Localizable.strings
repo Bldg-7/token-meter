@@ -5,6 +5,7 @@
 "content.badge.confidence.high" = "高";
 "content.badge.confidence.low" = "低";
 "content.badge.confidence.medium" = "中";
+"content.badge.reset_credits_format" = "剩余重置 %d 次";
 "content.badge.health.missing" = "缺失";
 "content.badge.health.ok" = "正常";
 "content.badge.health.stale" = "过期";
@@ -86,11 +87,11 @@
 "widget.now" = "现在";
 "widget.open_app_refresh" = "打开应用以刷新 Track 1 和 Track 2";
 "widget.quota_5h" = "配额 (5h)";
-"widget.quota_5h_na" = "配额 (5h) n/a";
 "widget.quota_model_specific" = "配额 (模型)";
 "widget.quota_na" = "配额 n/a";
 "widget.quota_session" = "配额 (会话)";
 "widget.quota_week" = "配额 (周)";
+"widget.reset_credits_format" = "↻ %d";
 "widget.reset_in" = "距重置";
 "widget.resets" = "重置次数";
 "widget.total" = "总计";

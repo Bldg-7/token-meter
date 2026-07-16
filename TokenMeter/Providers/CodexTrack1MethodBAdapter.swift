@@ -62,7 +62,8 @@ struct CodexTrack1MethodBAdapter {
             plan: plan,
             windows: windows,
             confidence: degraded ? .medium : .high,
-            parserVersion: parserVersion
+            parserVersion: parserVersion,
+            resetCreditsAvailable: payload.resetCreditsAvailable
         )
     }
 }
@@ -70,6 +71,7 @@ struct CodexTrack1MethodBAdapter {
 private struct MethodBPayload: Decodable {
     var plan: String?
     var windows: [MethodBWindow]
+    var resetCreditsAvailable: Int?
 
     private enum CodingKeys: String, CodingKey {
         case plan
@@ -79,6 +81,9 @@ private struct MethodBPayload: Decodable {
 
         case windows
         case limits
+
+        case resetCreditsAvailable
+        case reset_credits_available
     }
 
     init(from decoder: Decoder) throws {
@@ -100,6 +105,12 @@ private struct MethodBPayload: Decodable {
             self.windows = limits
         } else {
             self.windows = []
+        }
+
+        if let resetCredits = try c.decodeIfPresent(Int.self, forKey: .resetCreditsAvailable) {
+            self.resetCreditsAvailable = resetCredits
+        } else {
+            self.resetCreditsAvailable = try c.decodeIfPresent(Int.self, forKey: .reset_credits_available)
         }
     }
 }

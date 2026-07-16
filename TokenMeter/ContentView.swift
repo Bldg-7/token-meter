@@ -549,7 +549,18 @@ private struct Track1ProviderCard: View {
                 }
             }
 
-            Badge(text: planBadgeText)
+            HStack(spacing: 6) {
+                Badge(text: planBadgeText)
+
+                if let resetCredits = snapshot?.resetCreditsAvailable {
+                    Badge(
+                        text: String(
+                            format: NSLocalizedString("content.badge.reset_credits_format", comment: "Available rate-limit reset credits badge"),
+                            resetCredits
+                        )
+                    )
+                }
+            }
 
             if let snapshot {
                 let visibleWindows = menuVisibleWindows(from: snapshot)

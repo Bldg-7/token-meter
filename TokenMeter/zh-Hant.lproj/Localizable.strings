@@ -5,6 +5,7 @@
 "content.badge.confidence.high" = "高";
 "content.badge.confidence.low" = "低";
 "content.badge.confidence.medium" = "中";
+"content.badge.reset_credits_format" = "剩餘重置 %d 次";
 "content.badge.health.missing" = "缺失";
 "content.badge.health.ok" = "正常";
 "content.badge.health.stale" = "過期";
@@ -86,11 +87,11 @@
 "widget.now" = "現在";
 "widget.open_app_refresh" = "開啟 App 以重新整理 Track 1 與 Track 2";
 "widget.quota_5h" = "配額 (5h)";
-"widget.quota_5h_na" = "配額 (5h) n/a";
 "widget.quota_model_specific" = "配額 (模型)";
 "widget.quota_na" = "配額 n/a";
 "widget.quota_session" = "配額 (工作階段)";
 "widget.quota_week" = "配額 (週)";
+"widget.reset_credits_format" = "↻ %d";
 "widget.reset_in" = "距重設";
 "widget.resets" = "重設次數";
 "widget.total" = "總計";

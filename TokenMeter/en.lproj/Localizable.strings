@@ -5,6 +5,7 @@
 "content.badge.confidence.high" = "high";
 "content.badge.confidence.low" = "low";
 "content.badge.confidence.medium" = "medium";
+"content.badge.reset_credits_format" = "resets left: %d";
 "content.badge.health.missing" = "missing";
 "content.badge.health.ok" = "ok";
 "content.badge.health.stale" = "stale";
@@ -86,11 +87,11 @@
 "widget.now" = "now";
 "widget.open_app_refresh" = "Open the app to refresh Track 1 and Track 2";
 "widget.quota_5h" = "quota (5h)";
-"widget.quota_5h_na" = "quota (5h) n/a";
 "widget.quota_model_specific" = "quota (model)";
 "widget.quota_na" = "Quota n/a";
 "widget.quota_session" = "quota (session)";
 "widget.quota_week" = "quota (week)";
+"widget.reset_credits_format" = "↻ %d";
 "widget.reset_in" = "Reset in";
 "widget.resets" = "Resets";
 "widget.total" = "Total";

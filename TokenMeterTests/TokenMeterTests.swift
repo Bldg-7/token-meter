@@ -128,6 +128,45 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(snapshot.windows[0].remainingPercent, 75.0)
         XCTAssertEqual(snapshot.windows[0].resetAt, resetAt)
         XCTAssertEqual(snapshot.windows[0].rawScopeLabel, "codex")
+        XCTAssertNil(snapshot.resetCreditsAvailable)
+    }
+
+    func testCodexMethodBAdapterParsesResetCreditsAvailable() throws {
+        let json = """
+        {
+          "plan": "pro",
+          "resetCreditsAvailable": 2,
+          "windows": [
+            {
+              "windowId": "weekly",
+              "scope": "codex",
+              "usedPercent": 25.0,
+              "remainingPercent": 75.0,
+              "resetAt": 1700000000
+            }
+          ]
+        }
+        """
+
+        let snapshot = try CodexTrack1MethodBAdapter.snapshot(from: Data(json.utf8))
+        XCTAssertEqual(snapshot.resetCreditsAvailable, 2)
+
+        let snakeCase = """
+        {
+          "plan": "pro",
+          "reset_credits_available": 0,
+          "windows": [
+            {
+              "windowId": "weekly",
+              "scope": "codex",
+              "usedPercent": 25.0
+            }
+          ]
+        }
+        """
+
+        let snakeSnapshot = try CodexTrack1MethodBAdapter.snapshot(from: Data(snakeCase.utf8))
+        XCTAssertEqual(snakeSnapshot.resetCreditsAvailable, 0)
     }
 
     func testCodexMethodBAdapterMissingResetDegradesGracefully() throws {

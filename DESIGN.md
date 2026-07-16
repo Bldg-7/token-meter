@@ -77,6 +77,16 @@ Required fields:
 - confidence: `high | medium`
 - parseVersion
 
+Optional fields:
+
+- resetCreditsAvailable: banked rate-limit reset credits still available to
+  spend (Codex reset banking, June 2026); omitted when the source does not
+  report it
+
+Providers are not required to report every window. Codex stopped reporting
+`rolling_5h` in July 2026 (weekly-only limits); widget surfaces that show a
+single quota window prefer `rolling_5h` and fall back to `weekly`.
+
 ### 4.2 Track 2 (Local Telemetry)
 
 Track 2 only contains local token observations for charting.

@@ -974,8 +974,29 @@ struct ProviderCollectionRuntime: Sendable {
         {
             payload["plan"] = plan
         }
+        if let resetCredits = codexResetCreditsAvailable(fromJSONObject: json) {
+            payload["resetCreditsAvailable"] = resetCredits
+        }
 
         return try? JSONSerialization.data(withJSONObject: payload)
+    }
+
+    private func codexResetCreditsAvailable(fromJSONObject object: Any) -> Int? {
+        guard let dictionary = object as? [String: Any] else {
+            return nil
+        }
+        guard let container = dictionary["rate_limit_reset_credits"]
+            ?? dictionary["rateLimitResetCredits"]
+        else {
+            return nil
+        }
+        guard let count = extractIntValue(
+            fromJSONObject: container,
+            preferredKeys: ["availableCount", "available_count"]
+        ) else {
+            return nil
+        }
+        return max(0, count)
     }
 
     private func collectCodexTrack1FallbackOutput(executableURL: URL) throws -> Data? {
@@ -1056,6 +1077,13 @@ struct ProviderCollectionRuntime: Sendable {
         var payload: [String: Any] = ["windows": windows]
         if let plan {
             payload["plan"] = plan
+        }
+        // Reset credits can sit beside rateLimits in the result object rather
+        // than inside it.
+        if let resetCredits = codexResetCreditsAvailable(fromJSONObject: rateLimitsObject)
+            ?? codexResetCreditsAvailable(fromJSONObject: resultObject)
+        {
+            payload["resetCreditsAvailable"] = resetCredits
         }
 
         return try? JSONSerialization.data(withJSONObject: payload)
