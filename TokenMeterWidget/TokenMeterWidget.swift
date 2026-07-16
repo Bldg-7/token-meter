@@ -107,10 +107,14 @@ private struct TokenMeterProviderWidgetView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(provider.displayName)
                     .font(.headline)
+                    .lineLimit(1)
+                    .layoutPriority(1)
 
                 Spacer(minLength: 8)
 
-                if let resetCredits = track1?.resetCreditsAvailable {
+                // The small family's header has no room for a third label
+                // without wrapping the provider name.
+                if family != .systemSmall, let resetCredits = track1?.resetCreditsAvailable {
                     Text(String(format: localizedString("widget.reset_credits_format"), resetCredits))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)

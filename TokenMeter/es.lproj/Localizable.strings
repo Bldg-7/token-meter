@@ -91,7 +91,7 @@
 "widget.quota_na" = "Cuota n/a";
 "widget.quota_session" = "cuota (sesión)";
 "widget.quota_week" = "cuota (semana)";
-"widget.reset_credits_format" = "↻ %d";
+"widget.reset_credits_format" = "%d reinicios restantes";
 "widget.reset_in" = "Reinicio en";
 "widget.resets" = "Reinicios";
 "widget.total" = "Total";

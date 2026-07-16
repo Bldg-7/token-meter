@@ -91,7 +91,7 @@
 "widget.quota_na" = "クォータ n/a";
 "widget.quota_session" = "クォータ (セッション)";
 "widget.quota_week" = "クォータ (週)";
-"widget.reset_credits_format" = "↻ %d";
+"widget.reset_credits_format" = "リセット残り%d回";
 "widget.reset_in" = "リセットまで";
 "widget.resets" = "リセット";
 "widget.total" = "合計";

@@ -91,7 +91,7 @@
 "widget.quota_na" = "Quota n/a";
 "widget.quota_session" = "quota (session)";
 "widget.quota_week" = "quota (week)";
-"widget.reset_credits_format" = "↻ %d";
+"widget.reset_credits_format" = "%d resets left";
 "widget.reset_in" = "Reset in";
 "widget.resets" = "Resets";
 "widget.total" = "Total";

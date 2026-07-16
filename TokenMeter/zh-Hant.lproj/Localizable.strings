@@ -91,7 +91,7 @@
 "widget.quota_na" = "配額 n/a";
 "widget.quota_session" = "配額 (工作階段)";
 "widget.quota_week" = "配額 (週)";
-"widget.reset_credits_format" = "↻ %d";
+"widget.reset_credits_format" = "剩餘重置 %d 次";
 "widget.reset_in" = "距重設";
 "widget.resets" = "重設次數";
 "widget.total" = "總計";

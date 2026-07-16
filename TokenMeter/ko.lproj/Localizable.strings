@@ -91,7 +91,7 @@
 "widget.quota_na" = "할당량 해당 없음";
 "widget.quota_session" = "할당량 (세션)";
 "widget.quota_week" = "할당량 (주간)";
-"widget.reset_credits_format" = "↻ %d";
+"widget.reset_credits_format" = "리셋 %d회 남음";
 "widget.reset_in" = "초기화까지";
 "widget.resets" = "초기화";
 "widget.total" = "합계";

@@ -91,7 +91,7 @@
 "widget.quota_na" = "配额 n/a";
 "widget.quota_session" = "配额 (会话)";
 "widget.quota_week" = "配额 (周)";
-"widget.reset_credits_format" = "↻ %d";
+"widget.reset_credits_format" = "剩余重置 %d 次";
 "widget.reset_in" = "距重置";
 "widget.resets" = "重置次数";
 "widget.total" = "总计";
