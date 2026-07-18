@@ -282,7 +282,13 @@ private struct TokenMeterProviderWidgetView: View {
                         if let resetAt = row.window.resetAt {
                             HStack(spacing: 4) {
                                 Text("widget.resets")
-                                Text(resetAt, style: .relative)
+                                // Relative text counts UP for past dates; show
+                                // a static label instead of a growing timer.
+                                if resetAt > entry.date {
+                                    Text(resetAt, style: .relative)
+                                } else {
+                                    Text(localizedString("widget.now"))
+                                }
                             }
                             .font(.caption2)
                             .foregroundStyle(.secondary)

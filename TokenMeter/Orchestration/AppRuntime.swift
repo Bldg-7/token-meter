@@ -681,10 +681,11 @@ struct ProviderCollectionRuntime: Sendable {
                 "remainingPercent": remaining,
             ]
 
-            if let resetAt {
+            if let resetAt,
+               let normalizedResetAt = normalizedResetDate(resetAt, windowSeconds: windowSeconds(forWindowId: windowId)) {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                window["resetAt"] = formatter.string(from: resetAt)
+                window["resetAt"] = formatter.string(from: normalizedResetAt)
             }
 
             windows.append(window)
@@ -971,8 +972,9 @@ struct ProviderCollectionRuntime: Sendable {
                 continue
             }
 
+            let windowId = codexWindowId(scopeKey: entry.scopeKey, durationMins: durationMins)
             var window: [String: Any] = [
-                "windowId": codexWindowId(scopeKey: entry.scopeKey, durationMins: durationMins),
+                "windowId": windowId,
                 "scope": "codex_\(entry.scopeKey)",
                 "rawScopeLabel": "codex_\(entry.scopeKey)",
             ]
@@ -983,10 +985,15 @@ struct ProviderCollectionRuntime: Sendable {
                 window["remainingPercent"] = clampPercent(100.0 - used)
             }
 
-            if let resetAt {
+            if let resetAt,
+               let normalizedResetAt = normalizedResetDate(
+                   resetAt,
+                   windowSeconds: durationSeconds.map(TimeInterval.init) ?? windowSeconds(forWindowId: windowId)
+               )
+            {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                window["resetAt"] = formatter.string(from: resetAt)
+                window["resetAt"] = formatter.string(from: normalizedResetAt)
             }
 
             windows.append(window)
@@ -1283,8 +1290,9 @@ struct ProviderCollectionRuntime: Sendable {
             let used = usedPercent.map(clampPercent)
             let remaining = remainingPercent.map(clampPercent)
 
+            let windowId = codexWindowId(scopeKey: scopeKey, durationMins: durationMins)
             var window: [String: Any] = [
-                "windowId": codexWindowId(scopeKey: scopeKey, durationMins: durationMins),
+                "windowId": windowId,
                 "scope": "codex_\(scopeKey)",
                 "rawScopeLabel": "codex_\(scopeKey)",
             ]
@@ -1303,10 +1311,15 @@ struct ProviderCollectionRuntime: Sendable {
                 }
             }
 
-            if let resetAt {
+            if let resetAt,
+               let normalizedResetAt = normalizedResetDate(
+                   resetAt,
+                   windowSeconds: durationMins.map { TimeInterval($0 * 60) } ?? windowSeconds(forWindowId: windowId)
+               )
+            {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                window["resetAt"] = formatter.string(from: resetAt)
+                window["resetAt"] = formatter.string(from: normalizedResetAt)
             }
 
             windows.append(window)
@@ -1362,6 +1375,36 @@ struct ProviderCollectionRuntime: Sendable {
 
     private func extractIntValue(fromJSONObject object: Any, preferredKeys: [String]) -> Int? {
         extractDoubleValue(fromJSONObject: object, preferredKeys: preferredKeys).map { Int($0.rounded()) }
+    }
+
+    /// Provider APIs have shifted reset fields between "next reset" and
+    /// "window started / last reset" semantics (observed after the July 2026
+    /// Codex limit changes). Normalize to the next boundary: past values
+    /// advance by whole windows; values further out than ~one window are
+    /// unusable and dropped.
+    func normalizedResetDate(_ resetAt: Date, windowSeconds: TimeInterval?, now: Date = Date()) -> Date? {
+        guard let windowSeconds, windowSeconds > 0 else {
+            return resetAt > now ? resetAt : nil
+        }
+
+        if resetAt > now {
+            return resetAt.timeIntervalSince(now) <= windowSeconds * 1.25 ? resetAt : nil
+        }
+
+        let periods = (now.timeIntervalSince(resetAt) / windowSeconds).rounded(.up)
+        let candidate = resetAt.addingTimeInterval(periods * windowSeconds)
+        return candidate > now ? candidate : candidate.addingTimeInterval(windowSeconds)
+    }
+
+    private func windowSeconds(forWindowId windowId: String) -> TimeInterval? {
+        switch windowId {
+        case "rolling_5h":
+            return 5 * 60 * 60
+        case "weekly", "model_specific":
+            return 7 * 24 * 60 * 60
+        default:
+            return nil
+        }
     }
 
     private func extractResetDate(fromJSONObject object: Any) -> Date? {

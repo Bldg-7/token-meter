@@ -637,7 +637,13 @@ private struct Track1WindowRow: View {
             if let resetAt = window.resetAt {
                 HStack(spacing: 4) {
                     Text("content.track1.resets")
-                    Text(resetAt, style: .relative)
+                    // Relative text counts UP for past dates; show a static
+                    // label instead of a growing timer.
+                    if resetAt > Date() {
+                        Text(resetAt, style: .relative)
+                    } else {
+                        Text("widget.now")
+                    }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
