@@ -961,14 +961,7 @@ struct ProviderCollectionRuntime: Sendable {
                 continue
             }
             let usedPercent = extractDoubleValue(fromJSONObject: scope, preferredKeys: ["usedPercent", "used_percent"])
-            // The relative countdown is authoritative: observed payloads carry
-            // a reset_at that disagrees with reset_after_seconds by days.
-            let resetAfterSeconds = extractIntValue(
-                fromJSONObject: scope,
-                preferredKeys: ["resetAfterSeconds", "reset_after_seconds", "resetsInSeconds", "resets_in_seconds"]
-            )
-            let resetAt = resetAfterSeconds.map { Date().addingTimeInterval(TimeInterval($0)) }
-                ?? extractResetDate(fromJSONObject: scope)
+            let resetAt = extractResetDate(fromJSONObject: scope)
             let durationSeconds = extractIntValue(
                 fromJSONObject: scope,
                 preferredKeys: ["limitWindowSeconds", "limit_window_seconds"]
@@ -1284,14 +1277,7 @@ struct ProviderCollectionRuntime: Sendable {
 
             let usedPercent = extractDoubleValue(fromJSONObject: scopeObject, preferredKeys: ["usedPercent", "used_percent", "usedPct", "used_pct"])
             let remainingPercent = extractDoubleValue(fromJSONObject: scopeObject, preferredKeys: ["remainingPercent", "remaining_percent", "remainingPct", "remaining_pct"])
-            // The relative countdown is authoritative: observed payloads carry
-            // a reset_at that disagrees with reset_after_seconds by days.
-            let resetAfterSeconds = extractIntValue(
-                fromJSONObject: scopeObject,
-                preferredKeys: ["resetAfterSeconds", "reset_after_seconds", "resetsInSeconds", "resets_in_seconds"]
-            )
-            let resetAt = resetAfterSeconds.map { Date().addingTimeInterval(TimeInterval($0)) }
-                ?? extractResetDate(fromJSONObject: scopeObject)
+            let resetAt = extractResetDate(fromJSONObject: scopeObject)
             let durationMins = extractIntValue(fromJSONObject: scopeObject, preferredKeys: ["windowDurationMins", "window_duration_mins", "windowMinutes", "window_minutes"])
                 ?? (scopeKey == "primary"
                     ? extractIntValue(fromJSONObject: dictionary, preferredKeys: ["windowDurationMins", "window_duration_mins", "windowMinutes", "window_minutes"])
@@ -1402,9 +1388,7 @@ struct ProviderCollectionRuntime: Sendable {
         }
 
         if resetAt > now {
-            // Observed reset_at values can run past the window length even
-            // when fresh (~1.33 windows seen on Codex weekly); allow 1.5.
-            return resetAt.timeIntervalSince(now) <= windowSeconds * 1.5 ? resetAt : nil
+            return resetAt.timeIntervalSince(now) <= windowSeconds * 1.25 ? resetAt : nil
         }
 
         let periods = (now.timeIntervalSince(resetAt) / windowSeconds).rounded(.up)
