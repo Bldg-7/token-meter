@@ -94,6 +94,7 @@
 "widget.reset_credits_format" = "%d resets left";
 "widget.reset_in" = "Reset in";
 "widget.resets" = "Resets";
+"widget.stale_data_format" = "data from %@ ago";
 "widget.total" = "Total";
 "widget.unknown" = "Unknown";
 "widget.usage_na" = "usage n/a";

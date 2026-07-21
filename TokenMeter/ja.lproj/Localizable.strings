@@ -94,6 +94,7 @@
 "widget.reset_credits_format" = "リセット残り%d回";
 "widget.reset_in" = "リセットまで";
 "widget.resets" = "リセット";
+"widget.stale_data_format" = "%@前のデータ";
 "widget.total" = "合計";
 "widget.unknown" = "不明";
 "widget.usage_na" = "使用量 n/a";

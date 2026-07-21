@@ -94,6 +94,7 @@
 "widget.reset_credits_format" = "%d reinicios restantes";
 "widget.reset_in" = "Reinicio en";
 "widget.resets" = "Reinicios";
+"widget.stale_data_format" = "datos de hace %@";
 "widget.total" = "Total";
 "widget.unknown" = "Desconocido";
 "widget.usage_na" = "uso n/a";

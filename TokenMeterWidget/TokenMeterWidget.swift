@@ -131,6 +131,12 @@ private struct TokenMeterProviderWidgetView: View {
                 }
             }
 
+            if let staleness = stalenessLabel(track1: track1) {
+                Text(staleness)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
             if family == .systemSmall {
                 smallQuotaSummary(track1: track1)
             } else if family == .systemMedium {
@@ -228,7 +234,10 @@ private struct TokenMeterProviderWidgetView: View {
         if totalSeconds == 0 {
             return localizedString("widget.now")
         }
+        return compactDurationLabel(totalSeconds: totalSeconds)
+    }
 
+    private func compactDurationLabel(totalSeconds: Int) -> String {
         let minutes = totalSeconds / 60
         if minutes < 60 {
             return "\(minutes)m"
@@ -243,6 +252,24 @@ private struct TokenMeterProviderWidgetView: View {
         let days = hours / 24
         let remHours = hours % 24
         return remHours == 0 ? "\(days)d" : "\(days)d \(remHours)h"
+    }
+
+    /// Quota data older than this is flagged so a collection failure (e.g.
+    /// expired auth) cannot masquerade as fresh numbers.
+    private static let stalenessThresholdSeconds: TimeInterval = 30 * 60
+
+    private func stalenessLabel(track1: WidgetSnapshot.Track1Summary?) -> String? {
+        guard let observedAt = track1?.observedAt else {
+            return nil
+        }
+        let ageSeconds = entry.date.timeIntervalSince(observedAt)
+        guard ageSeconds > Self.stalenessThresholdSeconds else {
+            return nil
+        }
+        return String(
+            format: localizedString("widget.stale_data_format"),
+            compactDurationLabel(totalSeconds: Int(ageSeconds))
+        )
     }
 
     @ViewBuilder

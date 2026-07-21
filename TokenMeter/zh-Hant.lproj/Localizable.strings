@@ -94,6 +94,7 @@
 "widget.reset_credits_format" = "剩餘重置 %d 次";
 "widget.reset_in" = "距重設";
 "widget.resets" = "重設次數";
+"widget.stale_data_format" = "%@ 前的資料";
 "widget.total" = "總計";
 "widget.unknown" = "未知";
 "widget.usage_na" = "用量 n/a";
