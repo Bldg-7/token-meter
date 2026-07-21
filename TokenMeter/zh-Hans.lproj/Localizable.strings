@@ -87,6 +87,7 @@
 "widget.now" = "现在";
 "widget.open_app_refresh" = "打开应用以刷新 Track 1 和 Track 2";
 "widget.quota_5h" = "配额 (5h)";
+"widget.quota_fable" = "配额 (Fable 5)";
 "widget.quota_model_specific" = "配额 (模型)";
 "widget.quota_na" = "配额 n/a";
 "widget.quota_session" = "配额 (会话)";

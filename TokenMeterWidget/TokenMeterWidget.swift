@@ -336,6 +336,11 @@ private struct TokenMeterProviderWidgetView: View {
                 Track1QuotaRow(title: quotaDisplayTitle(for: id), window: $0)
             }
         }
+        if let fable = windows.first(where: {
+            $0.windowId == "model_specific" && ($0.scopeLabel?.lowercased().contains("fable") ?? false)
+        }) {
+            rows.append(Track1QuotaRow(title: localizedString("widget.quota_fable"), window: fable))
+        }
         if rows.isEmpty, let fallback = fallbackWindow(in: windows) {
             rows.append(Track1QuotaRow(title: quotaDisplayTitle(for: fallback.windowId), window: fallback))
         }

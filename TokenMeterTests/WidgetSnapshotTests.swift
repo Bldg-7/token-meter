@@ -544,6 +544,13 @@ final class WidgetSnapshotTests: XCTestCase {
                     resetAt: nil,
                     rawScopeLabel: "weekly"
                 ),
+                Track1Window(
+                    windowId: .modelSpecific,
+                    usedPercent: 41,
+                    remainingPercent: 59,
+                    resetAt: nil,
+                    rawScopeLabel: "claude_sevendayfable"
+                ),
             ],
             confidence: .high,
             parserVersion: "test",
@@ -558,6 +565,10 @@ final class WidgetSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.track1.first?.resetCreditsAvailable, 2)
+        XCTAssertEqual(
+            snapshot.track1.first?.windows.map(\.scopeLabel),
+            ["weekly", "claude_sevendayfable"]
+        )
 
         // Older persisted summaries without the field must keep decoding.
         let legacyJSON = """
@@ -571,5 +582,14 @@ final class WidgetSnapshotTests: XCTestCase {
         let decoder = JSONDecoder()
         let legacy = try decoder.decode(WidgetSnapshot.Track1Summary.self, from: Data(legacyJSON.utf8))
         XCTAssertNil(legacy.resetCreditsAvailable)
+
+        let legacyWindowJSON = """
+        {"windowId": "model_specific", "usedPercent": 10}
+        """
+        let legacyWindow = try decoder.decode(
+            WidgetSnapshot.Track1Summary.WindowSummary.self,
+            from: Data(legacyWindowJSON.utf8)
+        )
+        XCTAssertNil(legacyWindow.scopeLabel)
     }
 }

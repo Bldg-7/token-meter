@@ -19,6 +19,9 @@ struct WidgetSnapshot: Codable, Equatable {
             var usedPercent: Double?
             var remainingPercent: Double?
             var resetAt: Date?
+            /// Distinguishes windows sharing a windowId (e.g. the per-model
+            /// model_specific windows: seven_day_opus, seven_day_fable, ...).
+            var scopeLabel: String? = nil
         }
     }
 

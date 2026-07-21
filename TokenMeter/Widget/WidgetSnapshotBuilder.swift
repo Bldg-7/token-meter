@@ -30,7 +30,8 @@ enum WidgetSnapshotBuilder {
                     windowId: window.windowId.rawValue,
                     usedPercent: window.usedPercent,
                     remainingPercent: window.remainingPercent,
-                    resetAt: window.resetAt
+                    resetAt: window.resetAt,
+                    scopeLabel: window.rawScopeLabel
                 )
             }
 

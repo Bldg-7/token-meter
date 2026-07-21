@@ -87,6 +87,7 @@
 "widget.now" = "지금";
 "widget.open_app_refresh" = "앱을 열어 Track 1과 Track 2를 새로고침하세요";
 "widget.quota_5h" = "할당량 (5시간)";
+"widget.quota_fable" = "할당량 (Fable 5)";
 "widget.quota_model_specific" = "할당량 (모델별)";
 "widget.quota_na" = "할당량 해당 없음";
 "widget.quota_session" = "할당량 (세션)";
