@@ -1377,23 +1377,19 @@ struct ProviderCollectionRuntime: Sendable {
         extractDoubleValue(fromJSONObject: object, preferredKeys: preferredKeys).map { Int($0.rounded()) }
     }
 
-    /// Provider APIs have shifted reset fields between "next reset" and
-    /// "window started / last reset" semantics (observed after the July 2026
-    /// Codex limit changes). Normalize to the next boundary: past values
-    /// advance by whole windows; values further out than ~one window are
-    /// unusable and dropped.
+    /// Keep only plausible "next reset" values. A healthy API reports a
+    /// future timestamp within roughly one window (~1.33 windows observed on
+    /// the Codex weekly window, so allow 1.5). A past value means the data is
+    /// stale (e.g. collected before an auth expiry) and a far-future value is
+    /// garbage; drop both rather than display them.
     func normalizedResetDate(_ resetAt: Date, windowSeconds: TimeInterval?, now: Date = Date()) -> Date? {
+        guard resetAt > now else {
+            return nil
+        }
         guard let windowSeconds, windowSeconds > 0 else {
-            return resetAt > now ? resetAt : nil
+            return resetAt
         }
-
-        if resetAt > now {
-            return resetAt.timeIntervalSince(now) <= windowSeconds * 1.25 ? resetAt : nil
-        }
-
-        let periods = (now.timeIntervalSince(resetAt) / windowSeconds).rounded(.up)
-        let candidate = resetAt.addingTimeInterval(periods * windowSeconds)
-        return candidate > now ? candidate : candidate.addingTimeInterval(windowSeconds)
+        return resetAt.timeIntervalSince(now) <= windowSeconds * 1.5 ? resetAt : nil
     }
 
     private func windowSeconds(forWindowId windowId: String) -> TimeInterval? {

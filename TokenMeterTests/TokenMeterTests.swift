@@ -1177,27 +1177,27 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(appendedPoint.totalTokens, 10)
     }
 
-    func testNormalizedResetDateHandlesPastAndImplausibleValues() {
+    func testNormalizedResetDateKeepsOnlyPlausibleFutureValues() {
         let runtime = ProviderCollectionRuntime(homeDirectoryURL: FileManager.default.temporaryDirectory)
         let now = Date(timeIntervalSince1970: 1_770_000_000)
         let fiveHours: TimeInterval = 5 * 60 * 60
+        let weekly: TimeInterval = 7 * 24 * 60 * 60
 
-        // Future within one window: unchanged.
+        // Future within the plausibility bound: unchanged.
         let soon = now.addingTimeInterval(90 * 60)
         XCTAssertEqual(runtime.normalizedResetDate(soon, windowSeconds: fiveHours, now: now), soon)
 
-        // Past value (window-start semantics): advance to the next boundary.
-        let started = now.addingTimeInterval(-2 * 60 * 60)
-        XCTAssertEqual(
-            runtime.normalizedResetDate(started, windowSeconds: fiveHours, now: now),
-            started.addingTimeInterval(fiveHours)
-        )
+        // Observed healthy payloads run up to ~1.33 windows out; 1.5 passes.
+        let nineDays = now.addingTimeInterval(9.3 * 24 * 60 * 60)
+        XCTAssertEqual(runtime.normalizedResetDate(nineDays, windowSeconds: weekly, now: now), nineDays)
 
-        // A months-old anchor lands within one window of now.
-        let stale = now.addingTimeInterval(-79 * 24 * 60 * 60)
-        let normalized = runtime.normalizedResetDate(stale, windowSeconds: fiveHours, now: now)
-        let interval = normalized.map { $0.timeIntervalSince(now) } ?? -1
-        XCTAssertTrue(interval > 0 && interval <= fiveHours)
+        // Past values are stale data, not a countdown source: dropped.
+        XCTAssertNil(
+            runtime.normalizedResetDate(now.addingTimeInterval(-2 * 60 * 60), windowSeconds: fiveHours, now: now)
+        )
+        XCTAssertNil(
+            runtime.normalizedResetDate(now.addingTimeInterval(-79 * 24 * 60 * 60), windowSeconds: fiveHours, now: now)
+        )
 
         // Implausibly far future for the window: dropped.
         XCTAssertNil(
@@ -1210,7 +1210,7 @@ final class TokenMeterTests: XCTestCase {
 
         // Unknown window length: future passes through, past is dropped.
         XCTAssertEqual(runtime.normalizedResetDate(soon, windowSeconds: nil, now: now), soon)
-        XCTAssertNil(runtime.normalizedResetDate(started, windowSeconds: nil, now: now))
+        XCTAssertNil(runtime.normalizedResetDate(now.addingTimeInterval(-60), windowSeconds: nil, now: now))
     }
 
     func testCollectTrack1SnapshotClaudeMethodBOAuthUsageWindowsWithPlanFromProfile() throws {
