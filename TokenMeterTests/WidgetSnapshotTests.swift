@@ -240,6 +240,18 @@ final class WidgetSnapshotTests: XCTestCase {
             "Sonnet 4.5"
         )
         XCTAssertEqual(
+            Track2ModelClassifier.familyLabel(provider: .claude, model: "claude-fable-5"),
+            "Fable 5"
+        )
+        XCTAssertEqual(
+            Track2ModelClassifier.familyLabel(provider: .claude, model: "claude-fable-5-20260601"),
+            "Fable 5"
+        )
+        XCTAssertEqual(
+            Track2ModelClassifier.familyLabel(provider: .claude, model: "claude-mythos-5"),
+            "Mythos 5"
+        )
+        XCTAssertEqual(
             Track2ModelClassifier.familyLabel(provider: .claude, model: nil),
             "Unknown"
         )

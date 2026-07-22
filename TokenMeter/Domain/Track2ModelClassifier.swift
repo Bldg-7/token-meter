@@ -58,6 +58,20 @@ enum Track2ModelClassifier {
     }
 
     private static func claudeFamily(from model: String) -> String {
+        if let version = majorMinorVersion(after: "claude-fable-", in: model) {
+            return "Fable \(version)"
+        }
+        if model.contains("claude-fable") {
+            return "Fable"
+        }
+
+        if let version = majorMinorVersion(after: "claude-mythos-", in: model) {
+            return "Mythos \(version)"
+        }
+        if model.contains("claude-mythos") {
+            return "Mythos"
+        }
+
         if let version = majorMinorVersion(after: "claude-opus-", in: model) {
             return "Opus \(version)"
         }
@@ -122,10 +136,12 @@ enum Track2ModelClassifier {
             return nil
         }
 
+        // Version components are 1-2 digits; longer chunks are date stamps
+        // (e.g. claude-fable-5-20260601) and must not become a minor version.
         let components = token
             .split(whereSeparator: { $0 == "." || $0 == "-" || $0 == "_" })
             .map(String.init)
-            .filter { $0.isEmpty == false }
+            .filter { $0.isEmpty == false && $0.count <= 2 }
 
         guard components.isEmpty == false else {
             return nil
