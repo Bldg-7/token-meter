@@ -1177,6 +1177,82 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(appendedPoint.totalTokens, 10)
     }
 
+    func testCollectTrack1SnapshotClaudeParsesScopedLimitsArray() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        let claudeCLI = dir.appendingPathComponent("claude")
+        try Data("#!/bin/sh\nexit 2\n".utf8).write(to: claudeCLI, options: [.atomic])
+        XCTAssertEqual(claudeCLI.path.withCString { chmod($0, 0o755) }, 0)
+
+        try writeClaudeOAuthCredentialsJSON(
+            homeDirectoryURL: homeDir,
+            accessToken: "token_123",
+            expiresAtMs: 4_102_444_800_000
+        )
+
+        // Max-plan payload shape observed July 2026: legacy per-model keys are
+        // null and per-model limits arrive via the limits array.
+        let usageJSON = """
+        {
+          "five_hour": {"utilization": 16.0, "resets_at": "2026-07-22T10:30:00.057564+00:00"},
+          "seven_day": {"utilization": 35.0, "resets_at": "2026-07-25T23:00:00.057592+00:00"},
+          "seven_day_opus": null,
+          "seven_day_sonnet": null,
+          "limits": [
+            {"kind": "session", "group": "session", "percent": 16, "severity": "normal",
+             "resets_at": "2026-07-22T10:30:00.057564+00:00", "scope": null, "is_active": false},
+            {"kind": "weekly_all", "group": "weekly", "percent": 35, "severity": "normal",
+             "resets_at": "2026-07-25T23:00:00.057592+00:00", "scope": null, "is_active": false},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 67, "severity": "normal",
+             "resets_at": "2026-07-25T23:00:00.057938+00:00",
+             "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null},
+             "is_active": true}
+          ]
+        }
+        """
+
+        let runtime = ProviderCollectionRuntime(
+            homeDirectoryURL: homeDir,
+            processRunner: .init(run: { _, _, _ in
+                .init(status: 1, stdout: Data(), stderr: Data())
+            }),
+            httpRunner: .init(run: { request, _ in
+                let url = request.url?.absoluteString ?? ""
+                if url.contains("/api/oauth/usage") {
+                    return .init(statusCode: 200, body: Data(usageJSON.utf8))
+                }
+                if url.contains("/api/oauth/profile") {
+                    return .init(
+                        statusCode: 200,
+                        body: Data("{\"account\":{\"has_claude_pro\":true},\"organization\":{\"organization_type\":\"personal\"}}".utf8)
+                    )
+                }
+                return .init(statusCode: 500, body: Data())
+            })
+        )
+
+        let settings = AppSettings(
+            codex: CodexSettings(enabled: false),
+            claude: ClaudeSettings(enabled: true, cliPathOverride: claudeCLI.path),
+            locale: .system,
+            refreshIntervalSec: 60
+        )
+
+        let snapshot = try runtime.collectTrack1Snapshot(provider: .claude, settings: settings)
+
+        XCTAssertEqual(snapshot.windows.count, 3)
+        XCTAssertEqual(snapshot.windows[0].windowId, .rolling5h)
+        XCTAssertEqual(snapshot.windows[0].usedPercent, 16.0)
+        XCTAssertEqual(snapshot.windows[1].windowId, .weekly)
+        XCTAssertEqual(snapshot.windows[1].usedPercent, 35.0)
+        XCTAssertEqual(snapshot.windows[2].windowId, .modelSpecific)
+        XCTAssertEqual(snapshot.windows[2].usedPercent, 67.0)
+        XCTAssertEqual(snapshot.windows[2].remainingPercent, 33.0)
+        XCTAssertTrue(snapshot.windows[2].rawScopeLabel.contains("fable"))
+    }
+
     func testNormalizedResetDateKeepsOnlyPlausibleFutureValues() {
         let runtime = ProviderCollectionRuntime(homeDirectoryURL: FileManager.default.temporaryDirectory)
         let now = Date(timeIntervalSince1970: 1_770_000_000)

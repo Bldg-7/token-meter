@@ -691,12 +691,89 @@ struct ProviderCollectionRuntime: Sendable {
             windows.append(window)
         }
 
+        appendClaudeScopedLimitWindows(from: dictionary, into: &windows)
+
         guard windows.isEmpty == false else {
             return nil
         }
 
         let payload: [String: Any] = ["windows": windows]
         return try? JSONSerialization.data(withJSONObject: payload)
+    }
+
+    /// Newer usage payloads (July 2026, observed on Max plans) deliver
+    /// per-model limits through a `limits` array (kind weekly_scoped with
+    /// scope.model) instead of seven_day_<model> top-level keys, which now
+    /// arrive as null. Session/weekly entries duplicate the legacy keys and
+    /// are only taken when the legacy parse produced nothing for them.
+    private func appendClaudeScopedLimitWindows(
+        from dictionary: [String: Any],
+        into windows: inout [[String: Any]]
+    ) {
+        guard let limits = dictionary["limits"] as? [[String: Any]] else {
+            return
+        }
+
+        let existingWindowIds = Set(windows.compactMap { $0["windowId"] as? String })
+
+        for limit in limits {
+            guard let rawKind = limit["kind"] as? String else {
+                continue
+            }
+
+            let windowId: String
+            switch normalizeKey(rawKind) {
+            case "session":
+                windowId = "rolling_5h"
+            case "weeklyall":
+                windowId = "weekly"
+            case "weeklyscoped":
+                windowId = "model_specific"
+            default:
+                continue
+            }
+
+            if windowId != "model_specific", existingWindowIds.contains(windowId) {
+                continue
+            }
+
+            guard let usedPercent = extractDoubleValue(
+                fromJSONObject: limit,
+                preferredKeys: ["percent", "utilization"]
+            ) else {
+                continue
+            }
+
+            var scopeSuffix = rawKind
+            if let scope = limit["scope"] as? [String: Any] {
+                let model = scope["model"] as? [String: Any]
+                if let name = (model?["display_name"] as? String)
+                    ?? (model?["id"] as? String)
+                    ?? (scope["surface"] as? String)
+                {
+                    scopeSuffix += "_\(name)"
+                }
+            }
+
+            let used = clampPercent(usedPercent)
+            let scopeLabel = "claude_\(normalizeKey(scopeSuffix))"
+            var window: [String: Any] = [
+                "windowId": windowId,
+                "scope": scopeLabel,
+                "rawScopeLabel": scopeLabel,
+                "usedPercent": used,
+                "remainingPercent": clampPercent(100.0 - used),
+            ]
+
+            if let resetAt = extractResetDate(fromJSONObject: limit),
+               let normalizedResetAt = normalizedResetDate(resetAt, windowSeconds: windowSeconds(forWindowId: windowId)) {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                window["resetAt"] = formatter.string(from: normalizedResetAt)
+            }
+
+            windows.append(window)
+        }
     }
 
     private func injectingPlanLabel(_ plan: String, intoMethodBPayloadData payloadData: Data) -> Data? {
