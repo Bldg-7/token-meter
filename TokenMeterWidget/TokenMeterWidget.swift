@@ -857,9 +857,26 @@ private struct DotStackedBarGraph: View {
     var quotaOverlay: [WidgetSnapshot.Track2Summary.QuotaOverlayBar]
     var familyOrder: [String]
 
+    // The widget background follows the system appearance
+    // (`windowBackgroundColor`), so overlay ink drawn into the Canvas must
+    // flip with it: a fixed white line is visible on the dark background but
+    // vanishes on the light one. Read the color scheme and bake a concrete
+    // color per mode instead of relying on Canvas to resolve a dynamic color.
+    @Environment(\.colorScheme) private var colorScheme
+
     private let dotFillRatio: CGFloat = 0.78
     private let minimumDotDiameter: CGFloat = 1.8
     private let maximumDotDiameter: CGFloat = 4.4
+
+    /// Quota-overlay step line. Light ink on Dark Mode, dark ink on Light Mode.
+    private var quotaOverlayLineColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.35) : Color.black.opacity(0.45)
+    }
+
+    /// Reset highlight band. Subtle lightening on Dark Mode, darkening on Light.
+    private var resetHighlightColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+    }
 
     var body: some View {
         let layout = makeLayout()
@@ -1025,7 +1042,7 @@ private struct DotStackedBarGraph: View {
     private func drawResetHighlights(context: inout GraphicsContext, metrics: DotMetrics) {
         guard quotaOverlay.isEmpty == false else { return }
 
-        let resetColor = Color.white.opacity(0.06)
+        let resetColor = resetHighlightColor
         let bandWidth = max(2, metrics.columnStep * 1.0)
 
         for index in 0..<min(metrics.columnCount, quotaOverlay.count) {
@@ -1047,7 +1064,7 @@ private struct DotStackedBarGraph: View {
         let count = min(metrics.columnCount, quotaOverlay.count)
         guard count > 0 else { return }
 
-        let lineColor = Color.white.opacity(0.35)
+        let lineColor = quotaOverlayLineColor
         var runStart: Int?
 
         for index in 0..<count {
