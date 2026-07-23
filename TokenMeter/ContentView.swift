@@ -627,6 +627,7 @@ private struct Track1WindowRow: View {
             if let usedPercent = window.usedPercent {
                 ProgressView(value: usedPercent / 100.0)
                     .controlSize(.small)
+                    .tint(quotaUsageColor(forPercent: usedPercent))
             } else {
                 Text(localizedTrack1ScopeLabel(window.rawScopeLabel))
                     .font(.caption2)
@@ -738,6 +739,16 @@ private struct Track2ProviderCard: View {
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: now)
     }
+}
+
+/// Severity tint for a quota's used percentage: 90%+ reads as red, 75%+ as
+/// orange, and anything lower keeps the neutral accent color. Mirrors the
+/// widget's quota coloring so both surfaces signal pressure the same way.
+private func quotaUsageColor(forPercent usedPercent: Double?) -> Color {
+    guard let usedPercent else { return .accentColor }
+    if usedPercent >= 90 { return Color(nsColor: .systemRed) }
+    if usedPercent >= 75 { return Color(nsColor: .systemOrange) }
+    return .accentColor
 }
 
 private func localizedTrackConfidenceLabel(_ confidence: TrackConfidence) -> String {

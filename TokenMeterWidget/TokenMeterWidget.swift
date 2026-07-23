@@ -30,6 +30,17 @@ fileprivate let track2FamilyPalette: [Color] = [
     Color(red: 0.91, green: 0.42, blue: 0.42),
 ]
 
+/// Severity tint for a quota's used percentage: 90%+ reads as red, 75%+ as
+/// orange, and anything lower keeps the neutral accent color. Used for both
+/// the quota progress bars and the quota ring so the widget signals pressure
+/// consistently. `nil` (unknown usage) falls back to the accent color.
+fileprivate func quotaUsageColor(forPercent usedPercent: Double?) -> Color {
+    guard let usedPercent else { return .accentColor }
+    if usedPercent >= 90 { return Color(nsColor: .systemRed) }
+    if usedPercent >= 75 { return Color(nsColor: .systemOrange) }
+    return .accentColor
+}
+
 struct TokenMeterWidgetProvider: TimelineProvider {
     private let snapshotStore = WidgetSnapshotStore()
 
@@ -304,6 +315,7 @@ private struct TokenMeterProviderWidgetView: View {
                         if let used = effectiveUsedPercent(for: row.window) {
                             ProgressView(value: used / 100.0)
                                 .controlSize(.small)
+                                .tint(quotaUsageColor(forPercent: used))
                         }
 
                         if let resetAt = row.window.resetAt {
@@ -417,7 +429,7 @@ private struct TokenMeterProviderWidgetView: View {
                 Circle()
                     .trim(from: 0, to: usedFraction)
                     .stroke(
-                        Color.accentColor,
+                        quotaUsageColor(forPercent: usedPercent),
                         style: StrokeStyle(lineWidth: 9, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
