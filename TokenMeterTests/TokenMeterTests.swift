@@ -3180,3 +3180,62 @@ private func firstTextFieldString(in view: NSView) -> String? {
     }
     return nil
 }
+
+final class ClaudeOAuthUsageThrottleTests: XCTestCase {
+    func testParseRetryAfterAcceptsDeltaSeconds() {
+        XCTAssertEqual(ClaudeOAuthUsageThrottle.parseRetryAfter("1696"), 1696)
+    }
+
+    func testParseRetryAfterAcceptsHTTPDate() {
+        let now = Date(timeIntervalSince1970: 0)
+        let value = ClaudeOAuthUsageThrottle.parseRetryAfter("Thu, 01 Jan 1970 00:10:00 GMT", now: now)
+        XCTAssertEqual(value ?? 0, 600, accuracy: 1)
+    }
+
+    func testParseRetryAfterRejectsPastOrGarbage() {
+        XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter(nil))
+        XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("  "))
+        XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("soon"))
+        XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("0"))
+    }
+
+    func testThrottleHoldsUntilRetryAfterElapses() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let throttle = ClaudeOAuthUsageThrottle()
+        XCTAssertNil(throttle.remainingCooldown(now: start))
+
+        throttle.noteThrottled(retryAfterHeader: "600", now: start)
+        XCTAssertEqual(throttle.remainingCooldown(now: start) ?? 0, 600, accuracy: 1)
+        XCTAssertEqual(throttle.remainingCooldown(now: start.addingTimeInterval(599)) ?? 0, 1, accuracy: 1)
+        XCTAssertNil(throttle.remainingCooldown(now: start.addingTimeInterval(601)))
+    }
+
+    func testThrottleFallsBackToDefaultCooldownWithoutHeader() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let throttle = ClaudeOAuthUsageThrottle()
+        throttle.noteThrottled(retryAfterHeader: nil, now: start)
+        XCTAssertEqual(
+            throttle.remainingCooldown(now: start) ?? 0,
+            ClaudeOAuthUsageThrottle.defaultCooldownSec,
+            accuracy: 1
+        )
+    }
+
+    func testSuccessClearsCooldown() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let throttle = ClaudeOAuthUsageThrottle()
+        throttle.noteThrottled(retryAfterHeader: "600", now: start)
+        throttle.noteSucceeded()
+        XCTAssertNil(throttle.remainingCooldown(now: start))
+    }
+
+    func testHTTPRunResultHeaderLookupIsCaseInsensitive() {
+        let result = ProviderCollectionRuntime.HTTPRunResult(
+            statusCode: 429,
+            body: Data(),
+            headers: ["Retry-After": "1696"]
+        )
+        XCTAssertEqual(result.header("retry-after"), "1696")
+        XCTAssertNil(result.header("x-missing"))
+    }
+}

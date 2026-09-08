@@ -32,7 +32,10 @@ final class AppRuntime: ObservableObject {
         }
 
         let periodNs = UInt64(max(1, settings.refreshIntervalSec)) * 1_000_000_000
-        let claudeTrack1PeriodNs = periodNs * 5
+        // Claude quota windows are 5h/weekly, so polling faster than this buys
+        // nothing and only risks the /api/oauth/usage rate limit.
+        let claudeTrack1MinPeriodNs: UInt64 = 15 * 60 * 1_000_000_000
+        let claudeTrack1PeriodNs = max(periodNs * 5, claudeTrack1MinPeriodNs)
         let track1TimeoutNs: UInt64 = 2 * 1_000_000_000
         let track2TimeoutNs: UInt64 = 15 * 1_000_000_000
 
@@ -204,10 +207,63 @@ enum CollectionPipelineError: Error {
     case emptyOutput(provider: ProviderId)
 }
 
+/// Anthropic throttles `/api/oauth/usage` far more aggressively than our poll
+/// period: a 429 there carries a Retry-After of ~30 minutes. Requesting again
+/// inside that window renews the penalty, so once throttled the app never
+/// escapes on its own. Hold off until Retry-After elapses instead.
+final class ClaudeOAuthUsageThrottle: @unchecked Sendable {
+    static let defaultCooldownSec: TimeInterval = 30 * 60
+
+    private let lock = NSLock()
+    private var retryAt: Date?
+
+    /// Seconds still to wait, or nil when a request may go out.
+    func remainingCooldown(now: Date = Date()) -> TimeInterval? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let retryAt, retryAt > now else { return nil }
+        return retryAt.timeIntervalSince(now)
+    }
+
+    func noteThrottled(retryAfterHeader: String?, now: Date = Date()) {
+        let cooldown = Self.parseRetryAfter(retryAfterHeader, now: now) ?? Self.defaultCooldownSec
+        lock.lock()
+        defer { lock.unlock() }
+        retryAt = now.addingTimeInterval(cooldown)
+    }
+
+    func noteSucceeded() {
+        lock.lock()
+        defer { lock.unlock() }
+        retryAt = nil
+    }
+
+    /// Retry-After is either delta-seconds or an HTTP-date (RFC 7231).
+    static func parseRetryAfter(_ raw: String?, now: Date = Date()) -> TimeInterval? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              trimmed.isEmpty == false
+        else { return nil }
+
+        if let seconds = TimeInterval(trimmed) {
+            return seconds > 0 ? seconds : nil
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: trimmed) else { return nil }
+
+        let delta = date.timeIntervalSince(now)
+        return delta > 0 ? delta : nil
+    }
+}
+
 struct ProviderCollectionRuntime: Sendable {
     private static let openCodeTrack2ParserVersion = "opencode_track2_message_v1"
     private static let track2ContextTailBytes = 64 * 1024
     private static let track2IncrementalState = Track2IncrementalState()
+    private static let claudeOAuthUsageThrottle = ClaudeOAuthUsageThrottle()
 
     struct ProcessRunner: Sendable {
         enum Mode: Sendable {
@@ -285,6 +341,11 @@ struct ProviderCollectionRuntime: Sendable {
     struct HTTPRunResult: Sendable {
         var statusCode: Int
         var body: Data
+        var headers: [String: String] = [:]
+
+        func header(_ name: String) -> String? {
+            headers.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame })?.value
+        }
     }
 
     struct HTTPRunner: Sendable {
@@ -324,7 +385,13 @@ struct ProviderCollectionRuntime: Sendable {
                 throw URLError(.badServerResponse)
             }
 
-            return HTTPRunResult(statusCode: http.statusCode, body: outData ?? Data())
+            var headers: [String: String] = [:]
+            for (key, value) in http.allHeaderFields {
+                guard let key = key as? String else { continue }
+                headers[key] = String(describing: value)
+            }
+
+            return HTTPRunResult(statusCode: http.statusCode, body: outData ?? Data(), headers: headers)
         })
     }
 
@@ -559,6 +626,16 @@ struct ProviderCollectionRuntime: Sendable {
     }
 
     private func collectClaudeTrack1OAuthUsageOutput(timeoutSec: TimeInterval = 3.0) throws -> Data? {
+        let logger = DiagnosticsLogger(provider: .claude)
+
+        if let remaining = Self.claudeOAuthUsageThrottle.remainingCooldown() {
+            logger.debug(
+                "claude_oauth_usage_cooldown",
+                fields: ["remainingSec": .int(Int(remaining.rounded()))]
+            )
+            return nil
+        }
+
         guard let accessToken = try claudeOAuthAccessToken() else {
             return nil
         }
@@ -595,8 +672,24 @@ struct ProviderCollectionRuntime: Sendable {
 
         let result = try httpRunner.execute(request, timeoutSec: timeoutSec)
         guard (200...299).contains(result.statusCode) else {
+            let logger = DiagnosticsLogger(provider: .claude)
+            if result.statusCode == 429 {
+                let retryAfter = result.header("Retry-After")
+                Self.claudeOAuthUsageThrottle.noteThrottled(retryAfterHeader: retryAfter)
+                logger.warning(
+                    "claude_oauth_usage_throttled",
+                    fields: ["retryAfter": retryAfter.map { .string($0) } ?? .null]
+                )
+            } else {
+                logger.warning(
+                    "claude_oauth_usage_failed",
+                    fields: ["statusCode": .int(result.statusCode)]
+                )
+            }
             return nil
         }
+
+        Self.claudeOAuthUsageThrottle.noteSucceeded()
 
         let trimmed = result.body.trimmingTrailingWhitespaceAndNewline()
         return trimmed.isEmpty ? nil : trimmed
