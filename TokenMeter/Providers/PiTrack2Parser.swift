@@ -51,18 +51,12 @@ struct PiTrack2Parser {
         )
     }
 
-    struct ParseOutput {
-        var points: [Track2TimelinePoint]
-        var lastKnownModel: String?
-    }
-
     static func timelinePoints(
         from data: Data,
         sourceFile: String,
         provider: ProviderId,
-        header: SessionHeader?,
-        initialModel: String?
-    ) -> ParseOutput {
+        header: SessionHeader?
+    ) -> [Track2TimelinePoint] {
         // Decoded leniently: the incremental reader can hand over a buffer that
         // starts mid-character, because the 64KB context tail it prepends is
         // cut on a byte boundary. A strict decode would fail on the whole
@@ -74,8 +68,7 @@ struct PiTrack2Parser {
             fromJSONL: text,
             sourceFile: sourceFile,
             provider: provider,
-            header: header,
-            initialModel: initialModel
+            header: header
         )
     }
 
@@ -83,14 +76,17 @@ struct PiTrack2Parser {
         fromJSONL text: String,
         sourceFile: String,
         provider: ProviderId,
-        header: SessionHeader?,
-        initialModel: String?
-    ) -> ParseOutput {
+        header: SessionHeader?
+    ) -> [Track2TimelinePoint] {
         let taggedSourceFile = "\(sourceMarker):\(sourceFile)"
         var points: [Track2TimelinePoint] = []
-        // Carried across cycles because compaction entries name no model of
-        // their own; they are billed against whatever the session was running.
-        var currentModel = normalizedModel(initialModel)
+        // Deliberately scoped to this buffer rather than carried across cycles.
+        // A summarization entry names no model, so it is billed to whatever the
+        // session was last seen running — and if that were carried in, the same
+        // entry would be attributed differently depending on how much history
+        // the parse window happened to contain, which produces a second,
+        // differently-keyed point every time the context tail is re-read.
+        var windowModel: String?
 
         text.enumerateLines { line, _ in
             guard let object = jsonObject(from: line),
@@ -110,16 +106,17 @@ struct PiTrack2Parser {
                 // `responseModel` names the model that actually answered when a
                 // router rewrote the request (OpenRouter auto, for example), so
                 // it attributes more accurately than the requested `model`.
-                if let model = stringValue(message["responseModel"]) ?? stringValue(message["model"]) {
-                    currentModel = model
+                guard let model = stringValue(message["responseModel"]) ?? stringValue(message["model"]) else {
+                    return
                 }
+                windowModel = model
 
                 guard let usage = message["usage"] as? [String: Any],
                       let timestamp = entryTimestamp(message: message, entry: object),
                       isOwnedBySession(timestamp: timestamp, header: header),
                       let point = makePoint(
                           usage: usage,
-                          model: currentModel,
+                          model: model,
                           providerHint: stringValue(message["provider"]),
                           timestamp: timestamp,
                           provider: provider,
@@ -133,20 +130,21 @@ struct PiTrack2Parser {
 
             case "model_change":
                 if let model = stringValue(object["modelId"]) ?? stringValue(object["model"]) {
-                    currentModel = model
+                    windowModel = model
                 }
 
             // Summarizing the context is itself an LLM call, and an expensive
             // one — it reads the whole conversation. pi counts it in the
             // session totals and records its usage at the entry level, with no
-            // message wrapper and no model of its own.
+            // message wrapper and no model of its own, so it is billed to the
+            // model this buffer last saw the session running.
             case "compaction", "branch_summary":
                 guard let usage = object["usage"] as? [String: Any],
                       let timestamp = entryTimestamp(message: nil, entry: object),
                       isOwnedBySession(timestamp: timestamp, header: header),
                       let point = makePoint(
                           usage: usage,
-                          model: currentModel,
+                          model: windowModel,
                           providerHint: nil,
                           timestamp: timestamp,
                           provider: provider,
@@ -163,7 +161,7 @@ struct PiTrack2Parser {
             }
         }
 
-        return ParseOutput(points: points, lastKnownModel: currentModel)
+        return points
     }
 
     /// Routes a pi turn to the provider that owns the model. Models belonging
@@ -278,14 +276,6 @@ struct PiTrack2Parser {
             return date(fromUnixMilliseconds: milliseconds)
         }
         return dateValue(entry["timestamp"])
-    }
-
-    private static func normalizedModel(_ model: String?) -> String? {
-        guard let model else {
-            return nil
-        }
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func jsonObject(from rawLine: String) -> [String: Any]? {

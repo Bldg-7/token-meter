@@ -1139,11 +1139,14 @@ final class TokenMeterTests: XCTestCase {
             fileName: "2026-02-02T02-40-00-000Z_ses-pi-mixed.jsonl",
             header: piSessionHeaderObject(id: "ses-pi-mixed", startedAt: "2026-02-02T02:40:00Z"),
             entries: [
+                // The entry's ISO stamp deliberately disagrees with the
+                // message's: the per-message one wins.
                 piAssistantEntry(
                     id: "a1",
                     provider: "anthropic",
                     model: "claude-sonnet-4-5",
                     timestampMs: 1_770_000_010_000,
+                    entryTimestampMs: 1_770_000_015_000,
                     usage: [
                         "input": 100,
                         "output": 50,
@@ -1396,10 +1399,9 @@ final class TokenMeterTests: XCTestCase {
                     modelId: "gpt-5.6",
                     timestampMs: 1_770_000_030_000
                 ),
-                piCompactionEntry(
+                piBranchSummaryEntry(
                     id: "c2",
                     timestampMs: 1_770_000_040_000,
-                    tokensBefore: 900,
                     usage: ["input": 900, "output": 100, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 1_000]
                 ),
             ]
@@ -1425,7 +1427,7 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(codexPoints[0].totalTokens, 1_000)
     }
 
-    func testPiTrack2KeepsIncrementalCursorsWhenSharingAProviderWithCodexLogs() throws {
+    func testPiTrack2KeepsIncrementalCursorsWhenSharingAProviderWithCodexLogs() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
         let codexSessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-02", isDirectory: true)
@@ -1437,6 +1439,8 @@ final class TokenMeterTests: XCTestCase {
             """.appending("\n").utf8
         ).write(to: codexSessionsDir.appendingPathComponent("main.jsonl"), options: [.atomic])
 
+        let piSessionURL = piSessionsDirectory(homeDirectoryURL: homeDir)
+            .appendingPathComponent("2026-02-02T02-40-00-000Z_ses-pi-codex.jsonl")
         try writePiSessionFile(
             at: piSessionsDirectory(homeDirectoryURL: homeDir),
             fileName: "2026-02-02T02-40-00-000Z_ses-pi-codex.jsonl",
@@ -1453,10 +1457,13 @@ final class TokenMeterTests: XCTestCase {
         )
 
         let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
 
         let firstPoints = try runtime.collectTrack2Points(provider: .codex)
         XCTAssertEqual(firstPoints.count, 2)
         XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [5, 27])
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 2)
 
         // pi and the Codex primary parser scan different trees under the same
         // provider, and cursor eviction drops every path a pass did not scan.
@@ -1464,6 +1471,34 @@ final class TokenMeterTests: XCTestCase {
         // cursors, re-reading both files from byte 0 on every cycle.
         let secondPoints = try runtime.collectTrack2Points(provider: .codex)
         XCTAssertEqual(secondPoints, [])
+
+        // Surviving cursors must still deliver appended bytes, or an
+        // over-aggressive skip would look identical to the assertion above.
+        try appendText(
+            """
+            {"timestamp":1770000030,"session_id":"ses_codex","model":"gpt-5.6","input_tokens":1,"output_tokens":1}
+            """.appending("\n"),
+            to: codexSessionsDir.appendingPathComponent("main.jsonl")
+        )
+        try appendPiEntry(
+            piAssistantEntry(
+                id: "a2",
+                provider: "openai",
+                model: "gpt-5.6",
+                timestampMs: 1_770_000_040_000,
+                usage: ["input": 4, "output": 3, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 7]
+            ),
+            to: piSessionURL
+        )
+
+        // Both parsers re-emit the lines still inside their context tail, so
+        // what proves the append landed is the count of genuinely new rows.
+        let thirdPoints = try runtime.collectTrack2Points(provider: .codex)
+        let thirdPersisted = try await runtime.persistTrack2Points(thirdPoints, store: track2Store)
+        XCTAssertEqual(thirdPersisted, 2)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [2, 5, 7, 27])
     }
 
     func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
@@ -3435,6 +3470,7 @@ private func piAssistantEntry(
     responseModel: String? = nil,
     timestampMs: Int,
     includeMessageTimestamp: Bool = true,
+    entryTimestampMs: Int? = nil,
     usage: [String: Any]
 ) -> [String: Any] {
     var message: [String: Any] = [
@@ -3459,7 +3495,7 @@ private func piAssistantEntry(
         "type": "message",
         "id": id,
         "parentId": NSNull(),
-        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "timestamp": piISOTimestamp(millisecondsSince1970: entryTimestampMs ?? timestampMs),
         "message": message,
     ]
 }
@@ -3516,6 +3552,40 @@ private func piCompactionEntry(
     ]
 }
 
+/// Summarizing an abandoned branch carries usage the same way a compaction
+/// does.
+private func piBranchSummaryEntry(
+    id: String,
+    timestampMs: Int,
+    usage: [String: Any]
+) -> [String: Any] {
+    [
+        "type": "branch_summary",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "fromId": "a1",
+        "summary": "Branch explored approach A",
+        "usage": usage,
+    ]
+}
+
+private func piJSONLine(_ object: [String: Any]) throws -> String {
+    let data = try JSONSerialization.data(withJSONObject: object)
+    guard let line = String(data: data, encoding: .utf8) else {
+        throw NSError(
+            domain: "TokenMeterTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Failed to encode pi session JSON"]
+        )
+    }
+    return line
+}
+
+private func appendPiEntry(_ entry: [String: Any], to fileURL: URL) throws {
+    try appendText(piJSONLine(entry).appending("\n"), to: fileURL)
+}
+
 private func writePiSessionFile(
     at directoryURL: URL,
     fileName: String,
@@ -3526,15 +3596,7 @@ private func writePiSessionFile(
 
     var lines: [String] = []
     for object in [header] + entries {
-        let data = try JSONSerialization.data(withJSONObject: object)
-        guard let line = String(data: data, encoding: .utf8) else {
-            throw NSError(
-                domain: "TokenMeterTests",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to encode pi session JSON"]
-            )
-        }
-        lines.append(line)
+        lines.append(try piJSONLine(object))
     }
 
     let payload = lines.joined(separator: "\n") + "\n"

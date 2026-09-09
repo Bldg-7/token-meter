@@ -1924,21 +1924,19 @@ struct ProviderCollectionRuntime: Sendable {
             at: piSessionsRootURL(),
             where: { $0.pathExtension.lowercased() == "jsonl" }
         )
-        guard sessionFiles.isEmpty == false else {
-            return []
-        }
-
         // Headers sit at the head of the file, which an incremental pass has
         // long scrolled past, so they are read separately — but only for files
         // that actually have new bytes, since the parser is not called for the
         // ones the cursor skips.
         var headersByPath: [String: PiTrack2Parser.SessionHeader] = [:]
 
+        // An empty file list is passed through rather than short-circuited, so
+        // that cursors for sessions the user deleted are evicted.
         return collectIncrementalTrack2Points(
             from: sessionFiles,
             provider: provider,
             source: .piSession,
-            parser: { data, sourceFile, initialModel in
+            parser: { data, sourceFile, _ in
                 let header: PiTrack2Parser.SessionHeader
                 if let cachedHeader = headersByPath[sourceFile] {
                     header = cachedHeader
@@ -1947,14 +1945,15 @@ struct ProviderCollectionRuntime: Sendable {
                     headersByPath[sourceFile] = header
                 }
 
-                let output = PiTrack2Parser.timelinePoints(
-                    from: data,
-                    sourceFile: sourceFile,
-                    provider: provider,
-                    header: header,
-                    initialModel: initialModel
+                return Track2ParseResult(
+                    points: PiTrack2Parser.timelinePoints(
+                        from: data,
+                        sourceFile: sourceFile,
+                        provider: provider,
+                        header: header
+                    ),
+                    lastKnownModel: nil
                 )
-                return Track2ParseResult(points: output.points, lastKnownModel: output.lastKnownModel)
             }
         )
     }

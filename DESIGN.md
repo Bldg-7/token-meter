@@ -197,8 +197,13 @@ Parsing rules that the format demands:
   `usage` at the entry level, with no message wrapper and no model field.
   These are among the most expensive calls in a long session, and pi counts
   them in its own totals, so they are attributed to the model the session was
-  running — tracked forward from assistant turns and `model_change` entries,
-  and carried across incremental cycles in the file cursor.
+  last seen running, tracked forward from assistant turns and `model_change`
+  entries within the same parse buffer. That model is deliberately not carried
+  across incremental cycles: a point whose provider depends on how much
+  history the buffer happened to hold would be re-emitted under a different
+  key each time the context tail is re-read, defeating the content dedup. The
+  cost is that a summarization entry is skipped when no model precedes it in
+  the buffer, which is preferred over charting it against the wrong quota.
 - The session root follows `PI_CODING_AGENT_SESSION_DIR`, then
   `PI_CODING_AGENT_DIR`, then `~/.pi/agent`. A GUI launch inherits no shell
   exports, so those overrides only apply when the app itself was started with
