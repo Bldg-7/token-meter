@@ -9,7 +9,7 @@ final class AppRuntime: ObservableObject {
     private var widgetSnapshotRefresher: WidgetSnapshotRefresher?
     private let track1Store = Track1Store()
     private let track2Store = Track2Store()
-    private let collector = ProviderCollectionRuntime()
+    private let collector = ProviderCollectionRuntime(environment: ProcessInfo.processInfo.environment)
 
     init() {
         Task {
@@ -261,6 +261,9 @@ final class ClaudeOAuthUsageThrottle: @unchecked Sendable {
 
 struct ProviderCollectionRuntime: Sendable {
     private static let openCodeTrack2ParserVersion = "opencode_track2_message_v1"
+    /// A pi session header is a single short JSON line; this only has to be
+    /// large enough to contain it.
+    private static let piSessionHeaderProbeBytes = 8 * 1024
     private static let track2ContextTailBytes = 64 * 1024
     private static let track2IncrementalState = Track2IncrementalState()
     private static let claudeOAuthUsageThrottle = ClaudeOAuthUsageThrottle()
@@ -398,15 +401,20 @@ struct ProviderCollectionRuntime: Sendable {
     var homeDirectoryURL: URL
     var processRunner: ProcessRunner
     var httpRunner: HTTPRunner
+    var environment: [String: String]
 
     init(
         homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
         processRunner: ProcessRunner = .live,
-        httpRunner: HTTPRunner = .live
+        httpRunner: HTTPRunner = .live,
+        // Defaults to empty so tests stay hermetic; the app passes the real
+        // process environment at its single construction site.
+        environment: [String: String] = [:]
     ) {
         self.homeDirectoryURL = homeDirectoryURL
         self.processRunner = processRunner
         self.httpRunner = httpRunner
+        self.environment = environment
     }
 
     func collectTrack1Snapshot(provider: ProviderId, settings: AppSettings) throws -> Track1Snapshot {
@@ -1871,7 +1879,8 @@ struct ProviderCollectionRuntime: Sendable {
             }
         )
         let openCodePoints = try collectOpenCodeTrack2Points(provider: .codex)
-        return deduplicatedTrack2Points(primaryPoints + openCodePoints).sorted(by: { $0.timestamp < $1.timestamp })
+        let piPoints = collectPiTrack2Points(provider: .codex)
+        return deduplicatedTrack2Points(primaryPoints + openCodePoints + piPoints).sorted(by: { $0.timestamp < $1.timestamp })
     }
 
     private func collectClaudeTrack2Points() throws -> [Track2TimelinePoint] {
@@ -1897,8 +1906,126 @@ struct ProviderCollectionRuntime: Sendable {
         )
 
         points += try collectOpenCodeTrack2Points(provider: .claude)
+        points += collectPiTrack2Points(provider: .claude)
 
         return deduplicatedTrack2Points(points).sorted(by: { $0.timestamp < $1.timestamp })
+    }
+
+    /// pi keeps one JSONL file per session under
+    /// `~/.pi/agent/sessions/--<encoded cwd>--/`. Turns are routed to the
+    /// provider that owns the model, so this runs once per provider and each
+    /// pass keeps only its own share; the file cursors are already keyed by
+    /// provider, so the two passes do not interfere.
+    private func collectPiTrack2Points(provider: ProviderId) -> [Track2TimelinePoint] {
+        let sessionFiles = recursiveFiles(
+            at: piSessionsRootURL(),
+            where: { $0.pathExtension.lowercased() == "jsonl" }
+        )
+        guard sessionFiles.isEmpty == false else {
+            return []
+        }
+
+        // Headers are read separately because they sit at the head of the file,
+        // which an incremental pass has long scrolled past.
+        var headersByPath: [String: PiTrack2Parser.SessionHeader] = [:]
+        for fileURL in sessionFiles {
+            headersByPath[fileURL.path] = piSessionHeader(at: fileURL)
+        }
+
+        return collectIncrementalTrack2Points(
+            from: sessionFiles,
+            provider: provider,
+            parser: { data, sourceFile, _ in
+                Track2ParseResult(
+                    points: PiTrack2Parser.timelinePoints(
+                        from: data,
+                        sourceFile: sourceFile,
+                        provider: provider,
+                        header: headersByPath[sourceFile]
+                    ),
+                    lastKnownModel: nil
+                )
+            }
+        )
+    }
+
+    /// Mirrors pi's own resolution order (`PI_CODING_AGENT_SESSION_DIR`, then
+    /// `PI_CODING_AGENT_DIR`, then `~/.pi/agent`). A GUI launch does not
+    /// inherit a shell's exports, so the overrides only apply when TokenMeter
+    /// itself was started with them.
+    private func piSessionsRootURL() -> URL {
+        if let sessionDir = expandedPiPath(environment["PI_CODING_AGENT_SESSION_DIR"]) {
+            return sessionDir
+        }
+
+        let agentRoot = expandedPiPath(environment["PI_CODING_AGENT_DIR"])
+            ?? homeDirectoryURL
+            .appendingPathComponent(".pi", isDirectory: true)
+            .appendingPathComponent("agent", isDirectory: true)
+
+        return agentRoot.appendingPathComponent("sessions", isDirectory: true)
+    }
+
+    private func expandedPiPath(_ rawPath: String?) -> URL? {
+        guard let rawPath else {
+            return nil
+        }
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+
+        if trimmed == "~" {
+            return homeDirectoryURL
+        }
+        if trimmed.hasPrefix("~/") {
+            return homeDirectoryURL.appendingPathComponent(String(trimmed.dropFirst(2)), isDirectory: true)
+        }
+        return URL(fileURLWithPath: trimmed, isDirectory: true)
+    }
+
+    /// Reads the `{"type":"session",...}` line that opens a session file. The
+    /// header's creation time is what separates turns the session actually
+    /// spent from history `/fork` and `/clone` copied in verbatim; its id is
+    /// the session identity for every point in the file.
+    private func piSessionHeader(at fileURL: URL) -> PiTrack2Parser.SessionHeader {
+        let fallbackSessionId = piSessionIdFromFileName(fileURL)
+
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+            return PiTrack2Parser.SessionHeader(sessionId: fallbackSessionId)
+        }
+        defer {
+            try? handle.close()
+        }
+
+        // Cut at the newline before decoding: the probe runs past the header
+        // into message text, and slicing a multi-byte character in half there
+        // would fail the whole decode.
+        guard let head = try? handle.read(upToCount: Self.piSessionHeaderProbeBytes) else {
+            return PiTrack2Parser.SessionHeader(sessionId: fallbackSessionId)
+        }
+        let firstLineData = head.firstIndex(of: 0x0A).map { Data(head[..<$0]) } ?? head
+
+        guard let firstLine = String(data: firstLineData, encoding: .utf8),
+              let header = PiTrack2Parser.sessionHeader(fromFirstLine: firstLine)
+        else {
+            return PiTrack2Parser.SessionHeader(sessionId: fallbackSessionId)
+        }
+
+        return PiTrack2Parser.SessionHeader(
+            sessionId: header.sessionId ?? fallbackSessionId,
+            startedAt: header.startedAt
+        )
+    }
+
+    /// Session files are named `<timestamp>_<session-id>.jsonl`.
+    private func piSessionIdFromFileName(_ fileURL: URL) -> String? {
+        let name = fileURL.deletingPathExtension().lastPathComponent
+        guard let separatorIndex = name.firstIndex(of: "_") else {
+            return name.isEmpty ? nil : name
+        }
+        let sessionId = String(name[name.index(after: separatorIndex)...])
+        return sessionId.isEmpty ? nil : sessionId
     }
 
     private func collectOpenCodeTrack2Points(provider: ProviderId) throws -> [Track2TimelinePoint] {

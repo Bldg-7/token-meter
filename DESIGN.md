@@ -132,6 +132,9 @@ Dual parser:
 
 `~/.codex/history.jsonl` may be used for metadata only, not as token source of truth.
 
+Third-party agent sources that can run GPT models (section 5.3) also feed this
+provider.
+
 ## 5.2 Claude
 
 ### Track 1
@@ -145,6 +148,49 @@ Local timeline sources:
 
 1. `projects/*.jsonl`
 2. OpenCode local message logs (`~/.local/share/opencode/storage/message/**/*.json`, assistant-only)
+
+Third-party agent sources that can run Claude models (section 5.3) also feed
+this provider.
+
+## 5.3 Third-Party Agent Sources
+
+Agents that are not providers in their own right — they hold no quota and
+expose no usage endpoint, but spend the quota of the provider behind the model
+they call — are modelled as additional Track 2 *sources* rather than as
+providers. Each turn is attributed to the provider that owns the model, so a
+Claude model driven by another agent lands on the Claude timeline alongside
+Claude Code's own. Turns on models owned by neither provider (Gemini, DeepSeek,
+local models) have no home in the two-provider model and are dropped.
+
+These sources are Track 2 only. They must never contribute to Track 1, per the
+prohibitions in section 4.3.
+
+### OpenCode
+
+`~/.local/share/opencode/opencode.db` (SQLite), assistant rows only.
+
+### pi
+
+`~/.pi/agent/sessions/--<encoded cwd>--/<timestamp>_<session-id>.jsonl`, one
+append-only JSONL file per session, assistant messages only. pi supports Claude
+Pro/Max and ChatGPT subscription OAuth, so these turns draw down the same quota
+Track 1 already reports for those providers.
+
+Parsing rules that the format demands:
+
+- `usage.reasoning` is a subset of `usage.output` and `usage.cacheWrite1h` a
+  subset of `usage.cacheWrite`; neither may be added again.
+- `/fork` and `/clone` copy the source session's entries verbatim into a new
+  file while writing a fresh header. Turns older than their file's session
+  header are inherited history and must be skipped, or they are counted twice
+  under a second session id.
+- `responseModel` names the model that actually answered a routed request and
+  takes precedence over `model` for attribution.
+- The session root follows `PI_CODING_AGENT_SESSION_DIR`, then
+  `PI_CODING_AGENT_DIR`, then `~/.pi/agent`. A GUI launch inherits no shell
+  exports, so those overrides only apply when the app itself was started with
+  them; there is no settings override, since a source has no settings of its
+  own.
 
 
 ## 6. CLI Tool Discovery Design
