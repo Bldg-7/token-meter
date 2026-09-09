@@ -2146,12 +2146,23 @@ struct ProviderCollectionRuntime: Sendable {
         return (Data(data[..<splitIndex]), Data(data[splitIndex...]))
     }
 
+    /// Retains at most `track2ContextTailBytes` of an already-parsed buffer so the
+    /// next cycle can parse its delta with the preceding lines still in view.
+    ///
+    /// The cut is snapped forward to the next line feed. A raw byte offset can land
+    /// inside a multi-byte UTF-8 sequence, which leaves the next cycle's parse
+    /// buffer with an undecodable head, and it can only ever produce a truncated
+    /// leading line that carries no usable context anyway.
     private func trimmedTrack2ContextTail(_ data: Data) -> Data {
         guard data.count > Self.track2ContextTailBytes else {
             return data
         }
         let start = data.index(data.endIndex, offsetBy: -Self.track2ContextTailBytes)
-        return Data(data[start...])
+        guard let lineFeedIndex = data[start...].firstIndex(of: 0x0A) else {
+            // No complete line fits in the budget, so there is no context to keep.
+            return Data()
+        }
+        return Data(data[data.index(after: lineFeedIndex)...])
     }
 
     private func track2StateHomeKey() -> String {

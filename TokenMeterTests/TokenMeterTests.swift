@@ -462,6 +462,53 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(points[1].parserVersion, ClaudeTrack2SecondaryParser.parserVersion)
     }
 
+    // A byte-sliced context tail can start inside a multi-byte UTF-8 sequence, so
+    // the parser has to decode leniently: strict decoding used to fail on the whole
+    // buffer and silently drop every complete turn behind the damaged head.
+    func testCodexTrack2PrimaryParserParsesBufferWithTruncatedLeadingUTF8Sequence() {
+        let truncatedHead = Data(#"{"type":"message","text":"세션 기록 한글"}"#.utf8).dropFirst(27)
+        XCTAssertNil(String(data: Data(truncatedHead), encoding: .utf8))
+
+        let jsonl = """
+
+        {"timestamp":"2026-01-02T03:04:05Z","session_id":"sess_a","model":"gpt-5","usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}
+        {"timestamp":"2026-01-02T03:06:05Z","session_id":"sess_b","model":"gpt-5","usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}
+        """
+
+        var buffer = Data(truncatedHead)
+        buffer.append(Data(jsonl.utf8))
+
+        let points = CodexTrack2PrimaryParser.timelinePoints(from: buffer, sourceFile: "sessions/utf8-tail.jsonl")
+
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points[0].sessionId, "sess_a")
+        XCTAssertEqual(points[0].totalTokens, 5)
+        XCTAssertEqual(points[1].sessionId, "sess_b")
+        XCTAssertEqual(points[1].totalTokens, 3)
+    }
+
+    func testClaudeTrack2SecondaryParserParsesBufferWithTruncatedLeadingUTF8Sequence() {
+        let truncatedHead = Data(#"{"type":"message","text":"세션 기록 한글"}"#.utf8).dropFirst(27)
+        XCTAssertNil(String(data: Data(truncatedHead), encoding: .utf8))
+
+        let jsonl = """
+
+        {"timestamp":"2026-01-04T01:10:03Z","session_id":"proj_a","model":"claude-3-5-sonnet","usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+        {"time":1700001300,"conversation_id":"proj_b","model_name":"claude-3-7-sonnet","token_usage":{"input_tokens":5,"output_tokens":4}}
+        """
+
+        var buffer = Data(truncatedHead)
+        buffer.append(Data(jsonl.utf8))
+
+        let points = ClaudeTrack2SecondaryParser.timelinePoints(from: buffer, sourceFile: "projects/alpha/utf8-tail.jsonl")
+
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points[0].sessionId, "proj_a")
+        XCTAssertEqual(points[0].totalTokens, 6)
+        XCTAssertEqual(points[1].sessionId, "proj_b")
+        XCTAssertEqual(points[1].totalTokens, 9)
+    }
+
     func testClaudeTrack2SecondaryParserHandlesSchemaDriftFixture() throws {
         let jsonl = try fixtureText("track2_claude_secondary_drift.jsonl")
         let points = ClaudeTrack2SecondaryParser.timelinePoints(from: Data(jsonl.utf8), sourceFile: "projects/drift/activity.jsonl")
@@ -1172,6 +1219,74 @@ final class TokenMeterTests: XCTestCase {
 
         let appendedPoint = try XCTUnwrap(
             all.first(where: { Int($0.timestamp.timeIntervalSince1970) == 1_770_100_001 })
+        )
+        XCTAssertEqual(appendedPoint.model, "gpt-5.3-codex")
+        XCTAssertEqual(appendedPoint.totalTokens, 10)
+    }
+
+    func testTrack2IncrementalCollectionSurvivesMultiByteContextTailCut() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-03-11", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        // The collector retains the trailing 64KB of a parsed file as context for the
+        // next cycle. Build a session log past that budget, dense with multi-byte
+        // characters, and pick the padding that makes a raw 64KB byte cut land inside
+        // one of them — the shape that used to make the whole next parse fail.
+        let contextTailBudget = 64 * 1024
+        func messageLine(_ text: String) -> String {
+            #"{"type":"message","text":"\#(text)"}"# + "\n"
+        }
+        let turnLine = #"{"timestamp":1770200000,"session_id":"ses_utf8","model":"gpt-5.3-codex","input_tokens":3,"output_tokens":2}"# + "\n"
+        let filler = messageLine("세션 기록 한글 텍스트 🙂 café")
+        let fillerBlock = String(
+            repeating: filler,
+            count: (contextTailBudget + 4096) / filler.utf8.count + 1
+        )
+
+        var sessionLog: Data?
+        for padding in 0..<128 {
+            let candidate = Data((turnLine + fillerBlock + messageLine(String(repeating: "x", count: padding))).utf8)
+            if String(data: Data(candidate.suffix(contextTailBudget)), encoding: .utf8) == nil {
+                sessionLog = candidate
+                break
+            }
+        }
+        let baseLog = try XCTUnwrap(
+            sessionLog,
+            "expected some padding to put the 64KB tail cut inside a multi-byte character"
+        )
+        XCTAssertGreaterThan(baseLog.count, contextTailBudget)
+
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try baseLog.write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.count, 1)
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 1)
+
+        // Second cycle: the retained tail is prepended to the appended delta before
+        // it reaches the parser.
+        try appendText(
+            #"{"timestamp":1770200001,"session_id":"ses_utf8","model":"gpt-5.3-codex","input_tokens":4,"output_tokens":6}"# + "\n",
+            to: jsonlURL
+        )
+
+        let appendedPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(appendedPoints.count, 1)
+        let appendedPersisted = try await runtime.persistTrack2Points(appendedPoints, store: track2Store)
+        XCTAssertEqual(appendedPersisted, 1)
+
+        let all = try await track2Store.loadAll()
+        XCTAssertEqual(all.count, 2)
+
+        let appendedPoint = try XCTUnwrap(
+            all.first(where: { Int($0.timestamp.timeIntervalSince1970) == 1_770_200_001 })
         )
         XCTAssertEqual(appendedPoint.model, "gpt-5.3-codex")
         XCTAssertEqual(appendedPoint.totalTokens, 10)

@@ -18,9 +18,12 @@ struct CodexTrack2PrimaryParser {
         sourceFile: String,
         initialModel: String?
     ) -> ParseOutput {
-        guard let text = String(data: data, encoding: .utf8) else {
-            return ParseOutput(points: [], lastKnownModel: normalizedModel(initialModel))
-        }
+        // Decode leniently. The incremental collector prepends a retained context
+        // tail to each delta, so the head of `data` can be a truncated UTF-8
+        // sequence. Strict decoding would discard every complete turn behind it;
+        // U+FFFD substitution damages only that leading partial line, which was
+        // already parsed on an earlier cycle and now fails as JSON and is skipped.
+        let text = String(decoding: data, as: UTF8.self)
         return timelinePoints(fromJSONL: text, sourceFile: sourceFile, initialModel: initialModel)
     }
 

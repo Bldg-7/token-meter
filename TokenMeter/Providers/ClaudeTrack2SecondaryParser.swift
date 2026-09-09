@@ -5,9 +5,12 @@ struct ClaudeTrack2SecondaryParser {
     static let sourceMarker = "secondary_local"
 
     static func timelinePoints(from data: Data, sourceFile: String) -> [Track2TimelinePoint] {
-        guard let text = String(data: data, encoding: .utf8) else {
-            return []
-        }
+        // Decode leniently. The incremental collector prepends a retained context
+        // tail to each delta, so the head of `data` can be a truncated UTF-8
+        // sequence. Strict decoding would discard every complete turn behind it;
+        // U+FFFD substitution damages only that leading partial line, which was
+        // already parsed on an earlier cycle and now fails as JSON and is skipped.
+        let text = String(decoding: data, as: UTF8.self)
         return timelinePoints(fromJSONL: text, sourceFile: sourceFile)
     }
 
