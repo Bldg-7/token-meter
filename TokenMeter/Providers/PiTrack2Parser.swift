@@ -51,12 +51,18 @@ struct PiTrack2Parser {
         )
     }
 
+    struct ParseOutput {
+        var points: [Track2TimelinePoint]
+        var lastKnownModel: String?
+    }
+
     static func timelinePoints(
         from data: Data,
         sourceFile: String,
         provider: ProviderId,
-        header: SessionHeader?
-    ) -> [Track2TimelinePoint] {
+        header: SessionHeader?,
+        initialModel: String?
+    ) -> ParseOutput {
         // Decoded leniently: the incremental reader can hand over a buffer that
         // starts mid-character, because the 64KB context tail it prepends is
         // cut on a byte boundary. A strict decode would fail on the whole
@@ -64,31 +70,100 @@ struct PiTrack2Parser {
         // spoils the already-parsed partial line, which fails as JSON and is
         // skipped.
         let text = String(decoding: data, as: UTF8.self)
-        return timelinePoints(fromJSONL: text, sourceFile: sourceFile, provider: provider, header: header)
+        return timelinePoints(
+            fromJSONL: text,
+            sourceFile: sourceFile,
+            provider: provider,
+            header: header,
+            initialModel: initialModel
+        )
     }
 
     static func timelinePoints(
         fromJSONL text: String,
         sourceFile: String,
         provider: ProviderId,
-        header: SessionHeader?
-    ) -> [Track2TimelinePoint] {
+        header: SessionHeader?,
+        initialModel: String?
+    ) -> ParseOutput {
         let taggedSourceFile = "\(sourceMarker):\(sourceFile)"
         var points: [Track2TimelinePoint] = []
+        // Carried across cycles because compaction entries name no model of
+        // their own; they are billed against whatever the session was running.
+        var currentModel = normalizedModel(initialModel)
 
         text.enumerateLines { line, _ in
-            guard let point = timelinePoint(
-                fromLine: line,
-                sourceFile: taggedSourceFile,
-                provider: provider,
-                header: header
-            ) else {
+            guard let object = jsonObject(from: line),
+                  let entryType = stringValue(object["type"])
+            else {
                 return
             }
-            points.append(point)
+
+            switch entryType {
+            case "message":
+                guard let message = object["message"] as? [String: Any],
+                      stringValue(message["role"]) == "assistant"
+                else {
+                    return
+                }
+
+                // `responseModel` names the model that actually answered when a
+                // router rewrote the request (OpenRouter auto, for example), so
+                // it attributes more accurately than the requested `model`.
+                if let model = stringValue(message["responseModel"]) ?? stringValue(message["model"]) {
+                    currentModel = model
+                }
+
+                guard let usage = message["usage"] as? [String: Any],
+                      let timestamp = entryTimestamp(message: message, entry: object),
+                      isOwnedBySession(timestamp: timestamp, header: header),
+                      let point = makePoint(
+                          usage: usage,
+                          model: currentModel,
+                          providerHint: stringValue(message["provider"]),
+                          timestamp: timestamp,
+                          provider: provider,
+                          sessionId: header?.sessionId,
+                          sourceFile: taggedSourceFile
+                      )
+                else {
+                    return
+                }
+                points.append(point)
+
+            case "model_change":
+                if let model = stringValue(object["modelId"]) ?? stringValue(object["model"]) {
+                    currentModel = model
+                }
+
+            // Summarizing the context is itself an LLM call, and an expensive
+            // one — it reads the whole conversation. pi counts it in the
+            // session totals and records its usage at the entry level, with no
+            // message wrapper and no model of its own.
+            case "compaction", "branch_summary":
+                guard let usage = object["usage"] as? [String: Any],
+                      let timestamp = entryTimestamp(message: nil, entry: object),
+                      isOwnedBySession(timestamp: timestamp, header: header),
+                      let point = makePoint(
+                          usage: usage,
+                          model: currentModel,
+                          providerHint: nil,
+                          timestamp: timestamp,
+                          provider: provider,
+                          sessionId: header?.sessionId,
+                          sourceFile: taggedSourceFile
+                      )
+                else {
+                    return
+                }
+                points.append(point)
+
+            default:
+                return
+            }
         }
 
-        return points
+        return ParseOutput(points: points, lastKnownModel: currentModel)
     }
 
     /// Routes a pi turn to the provider that owns the model. Models belonging
@@ -116,41 +191,29 @@ struct PiTrack2Parser {
         return nil
     }
 
-    private static func timelinePoint(
-        fromLine rawLine: String,
-        sourceFile: String,
+    /// `/fork` and `/clone` copy prior entries verbatim into a new file while
+    /// stamping a fresh header, so anything older than the header is history
+    /// this session inherited rather than spent.
+    private static func isOwnedBySession(timestamp: Date, header: SessionHeader?) -> Bool {
+        guard let startedAt = header?.startedAt else {
+            return true
+        }
+        return timestamp >= startedAt.addingTimeInterval(-inheritedHistoryTolerance)
+    }
+
+    private static func makePoint(
+        usage: [String: Any],
+        model: String?,
+        providerHint: String?,
+        timestamp: Date,
         provider: ProviderId,
-        header: SessionHeader?
+        sessionId: String?,
+        sourceFile: String
     ) -> Track2TimelinePoint? {
-        guard let object = jsonObject(from: rawLine),
-              stringValue(object["type"]) == "message",
-              let message = object["message"] as? [String: Any],
-              stringValue(message["role"]) == "assistant",
-              let usage = message["usage"] as? [String: Any]
-        else {
-            return nil
-        }
-
-        // `responseModel` names the model that actually answered when a router
-        // rewrote the request (OpenRouter auto, for example), so it attributes
-        // more accurately than the requested `model`.
-        guard let model = stringValue(message["responseModel"]) ?? stringValue(message["model"]) else {
-            return nil
-        }
-
-        guard let resolvedProvider = mappedProvider(model: model, providerHint: stringValue(message["provider"])),
+        guard let model,
+              let resolvedProvider = mappedProvider(model: model, providerHint: providerHint),
               resolvedProvider == provider
         else {
-            return nil
-        }
-
-        guard let timestamp = resolvedTimestamp(message: message, entry: object) else {
-            return nil
-        }
-
-        if let startedAt = header?.startedAt,
-           timestamp < startedAt.addingTimeInterval(-inheritedHistoryTolerance)
-        {
             return nil
         }
 
@@ -187,8 +250,6 @@ struct PiTrack2Parser {
             return nil
         }
 
-        let sessionId = header?.sessionId
-
         let confidence: TrackConfidence
         if sessionId != nil, promptTokens != nil, completionTokens != nil {
             confidence = .medium
@@ -212,11 +273,19 @@ struct PiTrack2Parser {
 
     /// pi stamps assistant messages with a Unix millisecond timestamp; the
     /// enclosing entry carries an ISO-8601 string, used only as a fallback.
-    private static func resolvedTimestamp(message: [String: Any], entry: [String: Any]) -> Date? {
-        if let milliseconds = doubleValue(message["timestamp"]) {
+    private static func entryTimestamp(message: [String: Any]?, entry: [String: Any]) -> Date? {
+        if let message, let milliseconds = doubleValue(message["timestamp"]) {
             return date(fromUnixMilliseconds: milliseconds)
         }
         return dateValue(entry["timestamp"])
+    }
+
+    private static func normalizedModel(_ model: String?) -> String? {
+        guard let model else {
+            return nil
+        }
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func jsonObject(from rawLine: String) -> [String: Any]? {

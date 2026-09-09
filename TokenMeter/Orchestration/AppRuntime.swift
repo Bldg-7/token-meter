@@ -1869,6 +1869,7 @@ struct ProviderCollectionRuntime: Sendable {
         let primaryPoints = collectIncrementalTrack2Points(
             from: primaryFiles,
             provider: .codex,
+            source: .codexPrimary,
             parser: { data, sourceFile, initialModel in
                 let output = CodexTrack2PrimaryParser.timelinePoints(
                     from: data,
@@ -1897,6 +1898,7 @@ struct ProviderCollectionRuntime: Sendable {
         var points: [Track2TimelinePoint] = collectIncrementalTrack2Points(
             from: secondaryFiles,
             provider: .claude,
+            source: .claudeSecondary,
             parser: { data, sourceFile, _ in
                 Track2ParseResult(
                     points: ClaudeTrack2SecondaryParser.timelinePoints(from: data, sourceFile: sourceFile),
@@ -1914,8 +1916,9 @@ struct ProviderCollectionRuntime: Sendable {
     /// pi keeps one JSONL file per session under
     /// `~/.pi/agent/sessions/--<encoded cwd>--/`. Turns are routed to the
     /// provider that owns the model, so this runs once per provider and each
-    /// pass keeps only its own share; the file cursors are already keyed by
-    /// provider, so the two passes do not interfere.
+    /// pass keeps only its own share. Both passes scan the same files, and so
+    /// do the Codex and Claude passes for their own logs, which is why the
+    /// cursors are scoped by source as well as by provider.
     private func collectPiTrack2Points(provider: ProviderId) -> [Track2TimelinePoint] {
         let sessionFiles = recursiveFiles(
             at: piSessionsRootURL(),
@@ -1925,26 +1928,33 @@ struct ProviderCollectionRuntime: Sendable {
             return []
         }
 
-        // Headers are read separately because they sit at the head of the file,
-        // which an incremental pass has long scrolled past.
+        // Headers sit at the head of the file, which an incremental pass has
+        // long scrolled past, so they are read separately — but only for files
+        // that actually have new bytes, since the parser is not called for the
+        // ones the cursor skips.
         var headersByPath: [String: PiTrack2Parser.SessionHeader] = [:]
-        for fileURL in sessionFiles {
-            headersByPath[fileURL.path] = piSessionHeader(at: fileURL)
-        }
 
         return collectIncrementalTrack2Points(
             from: sessionFiles,
             provider: provider,
-            parser: { data, sourceFile, _ in
-                Track2ParseResult(
-                    points: PiTrack2Parser.timelinePoints(
-                        from: data,
-                        sourceFile: sourceFile,
-                        provider: provider,
-                        header: headersByPath[sourceFile]
-                    ),
-                    lastKnownModel: nil
+            source: .piSession,
+            parser: { data, sourceFile, initialModel in
+                let header: PiTrack2Parser.SessionHeader
+                if let cachedHeader = headersByPath[sourceFile] {
+                    header = cachedHeader
+                } else {
+                    header = piSessionHeader(at: URL(fileURLWithPath: sourceFile))
+                    headersByPath[sourceFile] = header
+                }
+
+                let output = PiTrack2Parser.timelinePoints(
+                    from: data,
+                    sourceFile: sourceFile,
+                    provider: provider,
+                    header: header,
+                    initialModel: initialModel
                 )
+                return Track2ParseResult(points: output.points, lastKnownModel: output.lastKnownModel)
             }
         )
     }
@@ -2138,10 +2148,12 @@ struct ProviderCollectionRuntime: Sendable {
     private func collectIncrementalTrack2Points(
         from files: [URL],
         provider: ProviderId,
+        source: Track2CursorSource,
         parser: (Data, String, String?) -> Track2ParseResult
     ) -> [Track2TimelinePoint] {
         let homeKey = track2StateHomeKey()
-        let currentCursors = Self.track2IncrementalState.fileCursors(homeKey: homeKey, provider: provider)
+        let scope = Track2CursorScope(provider: provider, source: source)
+        let currentCursors = Self.track2IncrementalState.fileCursors(homeKey: homeKey, scope: scope)
         var updatedCursors = currentCursors
         var points: [Track2TimelinePoint] = []
 
@@ -2221,7 +2233,7 @@ struct ProviderCollectionRuntime: Sendable {
 
         let activePaths = Set(files.map(\.path))
         updatedCursors = updatedCursors.filter { activePaths.contains($0.key) }
-        Self.track2IncrementalState.setFileCursors(updatedCursors, homeKey: homeKey, provider: provider)
+        Self.track2IncrementalState.setFileCursors(updatedCursors, homeKey: homeKey, scope: scope)
 
         return points
     }
@@ -2440,23 +2452,38 @@ struct ProviderCollectionRuntime: Sendable {
         }
     }
 
+    /// Distinguishes the telemetry sources that share a provider. Cursor
+    /// eviction drops every path a call did not scan, so two sources writing
+    /// the same scope would wipe each other's cursors on every cycle and force
+    /// both to re-read their files from the start forever.
+    private enum Track2CursorSource: String {
+        case codexPrimary
+        case claudeSecondary
+        case piSession
+    }
+
+    private struct Track2CursorScope: Hashable {
+        var provider: ProviderId
+        var source: Track2CursorSource
+    }
+
     private final class Track2IncrementalState: @unchecked Sendable {
         private let lock = NSLock()
-        private var fileCursorsByHome: [String: [ProviderId: [String: Track2FileCursor]]] = [:]
+        private var fileCursorsByHome: [String: [Track2CursorScope: [String: Track2FileCursor]]] = [:]
         private var openCodeCursorByHome: [String: [ProviderId: Int64]] = [:]
 
-        func fileCursors(homeKey: String, provider: ProviderId) -> [String: Track2FileCursor] {
+        func fileCursors(homeKey: String, scope: Track2CursorScope) -> [String: Track2FileCursor] {
             lock.lock()
-            let cursors = fileCursorsByHome[homeKey]?[provider] ?? [:]
+            let cursors = fileCursorsByHome[homeKey]?[scope] ?? [:]
             lock.unlock()
             return cursors
         }
 
-        func setFileCursors(_ cursors: [String: Track2FileCursor], homeKey: String, provider: ProviderId) {
+        func setFileCursors(_ cursors: [String: Track2FileCursor], homeKey: String, scope: Track2CursorScope) {
             lock.lock()
-            var providerCursors = fileCursorsByHome[homeKey] ?? [:]
-            providerCursors[provider] = cursors
-            fileCursorsByHome[homeKey] = providerCursors
+            var scopedCursors = fileCursorsByHome[homeKey] ?? [:]
+            scopedCursors[scope] = cursors
+            fileCursorsByHome[homeKey] = scopedCursors
             lock.unlock()
         }
 

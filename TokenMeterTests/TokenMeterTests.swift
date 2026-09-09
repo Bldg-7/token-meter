@@ -1364,6 +1364,108 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(agentDirPoints[0].totalTokens, 5)
     }
 
+    func testPiTrack2CountsCompactionTurnsAgainstTheSessionModel() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-compaction.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-compaction", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                // No per-message stamp, so the entry's ISO-8601 one has to
+                // carry this turn.
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_010_000,
+                    includeMessageTimestamp: false,
+                    usage: ["input": 100, "output": 50, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 150]
+                ),
+                piCompactionEntry(
+                    id: "c1",
+                    timestampMs: 1_770_000_020_000,
+                    tokensBefore: 50_000,
+                    usage: ["input": 50_000, "output": 800, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 50_800]
+                ),
+                piModelChangeEntry(
+                    id: "m1",
+                    provider: "openai",
+                    modelId: "gpt-5.6",
+                    timestampMs: 1_770_000_030_000
+                ),
+                piCompactionEntry(
+                    id: "c2",
+                    timestampMs: 1_770_000_040_000,
+                    tokensBefore: 900,
+                    usage: ["input": 900, "output": 100, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 1_000]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let claudePoints = try runtime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(claudePoints.count, 2)
+        XCTAssertEqual(claudePoints[0].timestamp, Date(timeIntervalSince1970: 1_770_000_010))
+        XCTAssertEqual(claudePoints[0].totalTokens, 150)
+        // The compaction turn names no model of its own; it is billed against
+        // whatever the session was running at the time.
+        XCTAssertEqual(claudePoints[1].model, "claude-sonnet-4-5")
+        XCTAssertEqual(claudePoints[1].promptTokens, 50_000)
+        XCTAssertEqual(claudePoints[1].completionTokens, 800)
+        XCTAssertEqual(claudePoints[1].totalTokens, 50_800)
+
+        // A model change moves subsequent summarization onto the other quota.
+        let codexPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(codexPoints.count, 1)
+        XCTAssertEqual(codexPoints[0].model, "gpt-5.6")
+        XCTAssertEqual(codexPoints[0].totalTokens, 1_000)
+    }
+
+    func testPiTrack2KeepsIncrementalCursorsWhenSharingAProviderWithCodexLogs() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let codexSessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-02", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexSessionsDir, withIntermediateDirectories: true)
+
+        try Data(
+            """
+            {"timestamp":1770000010,"session_id":"ses_codex","model":"gpt-5.6","input_tokens":3,"output_tokens":2}
+            """.appending("\n").utf8
+        ).write(to: codexSessionsDir.appendingPathComponent("main.jsonl"), options: [.atomic])
+
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-codex.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-codex", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "openai",
+                    model: "gpt-5.6",
+                    timestampMs: 1_770_000_020_000,
+                    usage: ["input": 20, "output": 7, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 27]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.count, 2)
+        XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [5, 27])
+
+        // pi and the Codex primary parser scan different trees under the same
+        // provider, and cursor eviction drops every path a pass did not scan.
+        // Sharing one cursor scope would make each pass wipe the other's
+        // cursors, re-reading both files from byte 0 on every cycle.
+        let secondPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(secondPoints, [])
+    }
+
     func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
@@ -3320,12 +3422,19 @@ private func piSessionHeaderObject(
     return object
 }
 
+private func piISOTimestamp(millisecondsSince1970: Int) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date(timeIntervalSince1970: Double(millisecondsSince1970) / 1000.0))
+}
+
 private func piAssistantEntry(
     id: String,
     provider: String,
     model: String,
     responseModel: String? = nil,
     timestampMs: Int,
+    includeMessageTimestamp: Bool = true,
     usage: [String: Any]
 ) -> [String: Any] {
     var message: [String: Any] = [
@@ -3336,30 +3445,74 @@ private func piAssistantEntry(
         "model": model,
         "usage": usage,
         "stopReason": "stop",
-        "timestamp": timestampMs,
     ]
     if let responseModel {
         message["responseModel"] = responseModel
+    }
+    // Providers that report no per-message stamp leave only the entry's
+    // ISO-8601 one.
+    if includeMessageTimestamp {
+        message["timestamp"] = timestampMs
     }
 
     return [
         "type": "message",
         "id": id,
         "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
         "message": message,
     ]
 }
 
 private func piUserEntry(id: String, timestampMs: Int) -> [String: Any] {
-    [
+    let message: [String: Any] = [
+        "role": "user",
+        "content": "hi",
+        "timestamp": timestampMs,
+    ]
+
+    return [
         "type": "message",
         "id": id,
         "parentId": NSNull(),
-        "message": [
-            "role": "user",
-            "content": "hi",
-            "timestamp": timestampMs,
-        ],
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "message": message,
+    ]
+}
+
+private func piModelChangeEntry(
+    id: String,
+    provider: String,
+    modelId: String,
+    timestampMs: Int
+) -> [String: Any] {
+    [
+        "type": "model_change",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "provider": provider,
+        "modelId": modelId,
+    ]
+}
+
+/// Summarizing the context is its own LLM call: pi records its usage on the
+/// compaction entry itself, with no message wrapper and no model field.
+private func piCompactionEntry(
+    id: String,
+    timestampMs: Int,
+    tokensBefore: Int,
+    usage: [String: Any]
+) -> [String: Any] {
+    [
+        "type": "compaction",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "summary": "User discussed X, Y, Z",
+        "firstKeptEntryId": "a1",
+        "tokensBefore": tokensBefore,
+        "usage": usage,
     ]
 }
 

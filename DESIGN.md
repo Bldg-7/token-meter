@@ -165,6 +165,12 @@ local models) have no home in the two-provider model and are dropped.
 These sources are Track 2 only. They must never contribute to Track 1, per the
 prohibitions in section 4.3.
 
+Each file-based source keeps its own incremental cursor scope, keyed by
+provider *and* source. The incremental reader evicts cursors for every path a
+pass did not scan, so two sources sharing a provider and a scope would erase
+each other's cursors on every cycle and re-read their files from the start
+forever.
+
 ### OpenCode
 
 `~/.local/share/opencode/opencode.db` (SQLite), assistant rows only.
@@ -172,7 +178,8 @@ prohibitions in section 4.3.
 ### pi
 
 `~/.pi/agent/sessions/--<encoded cwd>--/<timestamp>_<session-id>.jsonl`, one
-append-only JSONL file per session, assistant messages only. pi supports Claude
+append-only JSONL file per session. Assistant turns and the summarization
+entries described below are the token-bearing lines. pi supports Claude
 Pro/Max and ChatGPT subscription OAuth, so these turns draw down the same quota
 Track 1 already reports for those providers.
 
@@ -186,11 +193,23 @@ Parsing rules that the format demands:
   under a second session id.
 - `responseModel` names the model that actually answered a routed request and
   takes precedence over `model` for attribution.
+- `compaction` and `branch_summary` entries carry their summarization call's
+  `usage` at the entry level, with no message wrapper and no model field.
+  These are among the most expensive calls in a long session, and pi counts
+  them in its own totals, so they are attributed to the model the session was
+  running — tracked forward from assistant turns and `model_change` entries,
+  and carried across incremental cycles in the file cursor.
 - The session root follows `PI_CODING_AGENT_SESSION_DIR`, then
   `PI_CODING_AGENT_DIR`, then `~/.pi/agent`. A GUI launch inherits no shell
   exports, so those overrides only apply when the app itself was started with
   them; there is no settings override, since a source has no settings of its
   own.
+
+Known limitation: attribution is by model name first, provider hint second, so
+a locally served model whose name contains `gpt` (`gpt-oss-*` through a local
+runner, for example) is charted against the Codex timeline even though it costs
+nothing. Distinguishing it would need a provider allowlist keyed to pi's local
+runner ids.
 
 
 ## 6. CLI Tool Discovery Design
