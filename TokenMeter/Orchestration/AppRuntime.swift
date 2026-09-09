@@ -2216,7 +2216,17 @@ struct ProviderCollectionRuntime: Sendable {
                 }
             }
 
-            let contextSource = parseData.isEmpty ? (previousCursor?.contextTail ?? Data()) : parseData
+            // A trailing fragment carried in `pendingTail` is replayed as a
+            // prefix on the next cycle, so it must not also end the context
+            // tail: the full-read path parses the whole buffer, fragment
+            // included, and storing it in both places would glue it to itself
+            // and corrupt the line once the writer completes it.
+            let contextSource: Data
+            if parseData.isEmpty {
+                contextSource = previousCursor?.contextTail ?? Data()
+            } else {
+                contextSource = pendingTail.isEmpty ? parseData : split.complete
+            }
             let contextTail = trimmedTrack2ContextTail(contextSource)
 
             updatedCursors[filePath] = Track2FileCursor(

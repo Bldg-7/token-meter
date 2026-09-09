@@ -1549,6 +1549,138 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(appendedPoint.totalTokens, 10)
     }
 
+    /// A live agent can be mid-line when the very first scan of a session log
+    /// happens. The full-read path parses the whole buffer, so the torn
+    /// fragment must be carried forward only once — in `pendingTail`, not also
+    /// at the end of `contextTail` — or the completed entry is glued to a
+    /// duplicate of its own prefix, fails to parse, and is lost for good.
+    func testTrack2IncrementalFileCursorRecoversEntryTornOnFirstScan() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-27", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        // First snapshot catches the writer mid-line: one complete entry plus a
+        // truncated second one with no trailing newline.
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data(
+            """
+            {"timestamp":1770200000,"session_id":"ses_torn","model":"gpt-5.3-codex","input_tokens":3,"output_tokens":2}
+            """
+                .appending("\n")
+                .appending(#"{"timestamp":1770200001,"session_id":"ses_torn","input_tokens":4"#)
+                .utf8
+        ).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.count, 1)
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 1)
+
+        // The writer finishes the torn line and appends a third entry.
+        try appendText(
+            ",\"output_tokens\":6}\n"
+                .appending(#"{"timestamp":1770200002,"session_id":"ses_torn","input_tokens":5,"output_tokens":7}"#)
+                .appending("\n"),
+            to: jsonlURL
+        )
+
+        let appendedPoints = try runtime.collectTrack2Points(provider: .codex)
+        let appendedPersisted = try await runtime.persistTrack2Points(appendedPoints, store: track2Store)
+        XCTAssertEqual(appendedPersisted, 2)
+
+        let all = try await track2Store.loadAll()
+        XCTAssertEqual(all.count, 3)
+
+        let completedPoint = try XCTUnwrap(
+            all.first(where: { Int($0.timestamp.timeIntervalSince1970) == 1_770_200_001 })
+        )
+        XCTAssertEqual(completedPoint.model, "gpt-5.3-codex")
+        XCTAssertEqual(completedPoint.totalTokens, 10)
+
+        let thirdPoint = try XCTUnwrap(
+            all.first(where: { Int($0.timestamp.timeIntervalSince1970) == 1_770_200_002 })
+        )
+        XCTAssertEqual(thirdPoint.model, "gpt-5.3-codex")
+        XCTAssertEqual(thirdPoint.totalTokens, 12)
+    }
+
+    /// A live pi session is append-in-progress by nature, so the first scan of
+    /// one routinely lands mid-turn — the same torn-line case as above, on the
+    /// source most likely to hit it.
+    func testPiTrack2RecoversTurnTornOnFirstScan() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = piSessionsDirectory(homeDirectoryURL: homeDir)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        let headerLine = try piJSONLine(
+            piSessionHeaderObject(id: "ses-pi-torn", startedAt: "2026-02-02T02:40:00Z")
+        )
+        let firstTurnLine = try piJSONLine(
+            piAssistantEntry(
+                id: "a1",
+                provider: "openai",
+                model: "gpt-5.6",
+                timestampMs: 1_770_000_020_000,
+                usage: ["input": 20, "output": 7, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 27]
+            )
+        )
+        let secondTurnLine = try piJSONLine(
+            piAssistantEntry(
+                id: "a2",
+                provider: "openai",
+                model: "gpt-5.6",
+                timestampMs: 1_770_000_030_000,
+                usage: ["input": 4, "output": 3, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 7]
+            )
+        )
+        let tornPrefix = String(secondTurnLine.prefix(secondTurnLine.count / 2))
+        let tornRemainder = String(secondTurnLine.dropFirst(tornPrefix.count))
+
+        // The agent is still writing the second turn when TokenMeter first
+        // scans the file.
+        let sessionURL = sessionsDir.appendingPathComponent("2026-02-02T02-40-00-000Z_ses-pi-torn.jsonl")
+        try Data(
+            [headerLine, firstTurnLine]
+                .joined(separator: "\n")
+                .appending("\n")
+                .appending(tornPrefix)
+                .utf8
+        ).write(to: sessionURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [27])
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 1)
+
+        // The turn completes and a third one follows.
+        try appendText(tornRemainder.appending("\n"), to: sessionURL)
+        try appendPiEntry(
+            piAssistantEntry(
+                id: "a3",
+                provider: "openai",
+                model: "gpt-5.6",
+                timestampMs: 1_770_000_040_000,
+                usage: ["input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 2]
+            ),
+            to: sessionURL
+        )
+
+        let appendedPoints = try runtime.collectTrack2Points(provider: .codex)
+        let appendedPersisted = try await runtime.persistTrack2Points(appendedPoints, store: track2Store)
+        XCTAssertEqual(appendedPersisted, 2)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [2, 7, 27])
+    }
+
     func testCollectTrack1SnapshotClaudeParsesScopedLimitsArray() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)

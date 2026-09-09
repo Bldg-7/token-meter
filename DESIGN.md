@@ -171,6 +171,16 @@ pass did not scan, so two sources sharing a provider and a scope would erase
 each other's cursors on every cycle and re-read their files from the start
 forever.
 
+A cursor carries two pieces of the bytes it has already read: a `pendingTail`
+holding a trailing line the writer had not finished, and a `contextTail`
+holding the last 64KB of complete lines, which gives the next parse the
+preceding lines a point may need (a model name, a session header). Both are
+prepended to the next buffer, `contextTail` first, so a fragment must live in
+exactly one of them: stored in both, it is glued to a duplicate of itself once
+the writer completes the line, the entry fails to parse, and the offset has
+already moved past it, so it is lost for good. A live agent is mid-line
+whenever the first scan of its log happens, which is the common case for pi.
+
 ### OpenCode
 
 `~/.local/share/opencode/opencode.db` (SQLite), assistant rows only.
