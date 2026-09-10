@@ -9,7 +9,7 @@ final class AppRuntime: ObservableObject {
     private var widgetSnapshotRefresher: WidgetSnapshotRefresher?
     private let track1Store = Track1Store()
     private let track2Store = Track2Store()
-    private let collector = ProviderCollectionRuntime()
+    private let collector = ProviderCollectionRuntime(environment: ProcessInfo.processInfo.environment)
 
     init() {
         Task {
@@ -261,6 +261,9 @@ final class ClaudeOAuthUsageThrottle: @unchecked Sendable {
 
 struct ProviderCollectionRuntime: Sendable {
     private static let openCodeTrack2ParserVersion = "opencode_track2_message_v1"
+    /// A pi session header is a single short JSON line; this only has to be
+    /// large enough to contain it.
+    private static let piSessionHeaderProbeBytes = 8 * 1024
     private static let track2ContextTailBytes = 64 * 1024
     private static let track2IncrementalState = Track2IncrementalState()
     private static let claudeOAuthUsageThrottle = ClaudeOAuthUsageThrottle()
@@ -398,15 +401,20 @@ struct ProviderCollectionRuntime: Sendable {
     var homeDirectoryURL: URL
     var processRunner: ProcessRunner
     var httpRunner: HTTPRunner
+    var environment: [String: String]
 
     init(
         homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
         processRunner: ProcessRunner = .live,
-        httpRunner: HTTPRunner = .live
+        httpRunner: HTTPRunner = .live,
+        // Defaults to empty so tests stay hermetic; the app passes the real
+        // process environment at its single construction site.
+        environment: [String: String] = [:]
     ) {
         self.homeDirectoryURL = homeDirectoryURL
         self.processRunner = processRunner
         self.httpRunner = httpRunner
+        self.environment = environment
     }
 
     func collectTrack1Snapshot(provider: ProviderId, settings: AppSettings) throws -> Track1Snapshot {
@@ -1861,6 +1869,7 @@ struct ProviderCollectionRuntime: Sendable {
         let primaryPoints = collectIncrementalTrack2Points(
             from: primaryFiles,
             provider: .codex,
+            source: .codexPrimary,
             parser: { data, sourceFile, initialModel in
                 let output = CodexTrack2PrimaryParser.timelinePoints(
                     from: data,
@@ -1871,7 +1880,8 @@ struct ProviderCollectionRuntime: Sendable {
             }
         )
         let openCodePoints = try collectOpenCodeTrack2Points(provider: .codex)
-        return deduplicatedTrack2Points(primaryPoints + openCodePoints).sorted(by: { $0.timestamp < $1.timestamp })
+        let piPoints = collectPiTrack2Points(provider: .codex)
+        return deduplicatedTrack2Points(primaryPoints + openCodePoints + piPoints).sorted(by: { $0.timestamp < $1.timestamp })
     }
 
     private func collectClaudeTrack2Points() throws -> [Track2TimelinePoint] {
@@ -1888,6 +1898,7 @@ struct ProviderCollectionRuntime: Sendable {
         var points: [Track2TimelinePoint] = collectIncrementalTrack2Points(
             from: secondaryFiles,
             provider: .claude,
+            source: .claudeSecondary,
             parser: { data, sourceFile, _ in
                 Track2ParseResult(
                     points: ClaudeTrack2SecondaryParser.timelinePoints(from: data, sourceFile: sourceFile),
@@ -1897,8 +1908,133 @@ struct ProviderCollectionRuntime: Sendable {
         )
 
         points += try collectOpenCodeTrack2Points(provider: .claude)
+        points += collectPiTrack2Points(provider: .claude)
 
         return deduplicatedTrack2Points(points).sorted(by: { $0.timestamp < $1.timestamp })
+    }
+
+    /// pi keeps one JSONL file per session under
+    /// `~/.pi/agent/sessions/--<encoded cwd>--/`. Turns are routed to the
+    /// provider that owns the model, so this runs once per provider and each
+    /// pass keeps only its own share. Both passes scan the same files, and so
+    /// do the Codex and Claude passes for their own logs, which is why the
+    /// cursors are scoped by source as well as by provider.
+    private func collectPiTrack2Points(provider: ProviderId) -> [Track2TimelinePoint] {
+        let sessionFiles = recursiveFiles(
+            at: piSessionsRootURL(),
+            where: { $0.pathExtension.lowercased() == "jsonl" }
+        )
+        // Headers sit at the head of the file, which an incremental pass has
+        // long scrolled past, so they are read separately — but only for files
+        // that actually have new bytes, since the parser is not called for the
+        // ones the cursor skips.
+        var headersByPath: [String: PiTrack2Parser.SessionHeader] = [:]
+
+        // An empty file list is passed through rather than short-circuited, so
+        // that cursors for sessions the user deleted are evicted.
+        return collectIncrementalTrack2Points(
+            from: sessionFiles,
+            provider: provider,
+            source: .piSession,
+            parser: { data, sourceFile, _ in
+                let header: PiTrack2Parser.SessionHeader
+                if let cachedHeader = headersByPath[sourceFile] {
+                    header = cachedHeader
+                } else {
+                    header = piSessionHeader(at: URL(fileURLWithPath: sourceFile))
+                    headersByPath[sourceFile] = header
+                }
+
+                return Track2ParseResult(
+                    points: PiTrack2Parser.timelinePoints(
+                        from: data,
+                        sourceFile: sourceFile,
+                        provider: provider,
+                        header: header
+                    ),
+                    lastKnownModel: nil
+                )
+            }
+        )
+    }
+
+    /// Mirrors pi's own resolution order (`PI_CODING_AGENT_SESSION_DIR`, then
+    /// `PI_CODING_AGENT_DIR`, then `~/.pi/agent`). A GUI launch does not
+    /// inherit a shell's exports, so the overrides only apply when TokenMeter
+    /// itself was started with them.
+    private func piSessionsRootURL() -> URL {
+        if let sessionDir = expandedPiPath(environment["PI_CODING_AGENT_SESSION_DIR"]) {
+            return sessionDir
+        }
+
+        let agentRoot = expandedPiPath(environment["PI_CODING_AGENT_DIR"])
+            ?? homeDirectoryURL
+            .appendingPathComponent(".pi", isDirectory: true)
+            .appendingPathComponent("agent", isDirectory: true)
+
+        return agentRoot.appendingPathComponent("sessions", isDirectory: true)
+    }
+
+    private func expandedPiPath(_ rawPath: String?) -> URL? {
+        guard let rawPath else {
+            return nil
+        }
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+
+        if trimmed == "~" {
+            return homeDirectoryURL
+        }
+        if trimmed.hasPrefix("~/") {
+            return homeDirectoryURL.appendingPathComponent(String(trimmed.dropFirst(2)), isDirectory: true)
+        }
+        return URL(fileURLWithPath: trimmed, isDirectory: true)
+    }
+
+    /// Reads the `{"type":"session",...}` line that opens a session file. The
+    /// header's creation time is what separates turns the session actually
+    /// spent from history `/fork` and `/clone` copied in verbatim; its id is
+    /// the session identity for every point in the file.
+    private func piSessionHeader(at fileURL: URL) -> PiTrack2Parser.SessionHeader {
+        let fallbackSessionId = piSessionIdFromFileName(fileURL)
+
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+            return PiTrack2Parser.SessionHeader(sessionId: fallbackSessionId)
+        }
+        defer {
+            try? handle.close()
+        }
+
+        // Cut at the newline before decoding: the probe runs past the header
+        // into message text, and slicing a multi-byte character in half there
+        // would fail the whole decode.
+        guard let head = try? handle.read(upToCount: Self.piSessionHeaderProbeBytes) else {
+            return PiTrack2Parser.SessionHeader(sessionId: fallbackSessionId)
+        }
+        let firstLineData = head.firstIndex(of: 0x0A).map { Data(head[..<$0]) } ?? head
+
+        guard let firstLine = String(data: firstLineData, encoding: .utf8),
+              let header = PiTrack2Parser.sessionHeader(fromFirstLine: firstLine)
+        else {
+            return PiTrack2Parser.SessionHeader(sessionId: fallbackSessionId)
+        }
+
+        return PiTrack2Parser.SessionHeader(
+            sessionId: header.sessionId ?? fallbackSessionId,
+            startedAt: header.startedAt
+        )
+    }
+
+    /// Session files are named `<timestamp>_<session-id>.jsonl`.
+    private func piSessionIdFromFileName(_ fileURL: URL) -> String? {
+        let name = fileURL.deletingPathExtension().lastPathComponent
+        guard let separatorIndex = name.firstIndex(of: "_") else {
+            return name.isEmpty ? nil : name
+        }
+        let sessionId = String(name[name.index(after: separatorIndex)...])
+        return sessionId.isEmpty ? nil : sessionId
     }
 
     private func collectOpenCodeTrack2Points(provider: ProviderId) throws -> [Track2TimelinePoint] {
@@ -2011,10 +2147,12 @@ struct ProviderCollectionRuntime: Sendable {
     private func collectIncrementalTrack2Points(
         from files: [URL],
         provider: ProviderId,
+        source: Track2CursorSource,
         parser: (Data, String, String?) -> Track2ParseResult
     ) -> [Track2TimelinePoint] {
         let homeKey = track2StateHomeKey()
-        let currentCursors = Self.track2IncrementalState.fileCursors(homeKey: homeKey, provider: provider)
+        let scope = Track2CursorScope(provider: provider, source: source)
+        let currentCursors = Self.track2IncrementalState.fileCursors(homeKey: homeKey, scope: scope)
         var updatedCursors = currentCursors
         var points: [Track2TimelinePoint] = []
 
@@ -2078,7 +2216,20 @@ struct ProviderCollectionRuntime: Sendable {
                 }
             }
 
-            let contextSource = parseData.isEmpty ? (previousCursor?.contextTail ?? Data()) : parseData
+            // Whatever stays buffered in `pendingTail` is replayed as a prefix
+            // on the next cycle, so it must not also be baked into the context
+            // tail: the fragment would be glued to a copy of itself and the
+            // entry it belongs to could never be reassembled. Only the
+            // full-read branch can hit that, since it parses the whole buffer
+            // including the torn trailing line.
+            let contextSource: Data
+            if parseData.isEmpty {
+                contextSource = previousCursor?.contextTail ?? Data()
+            } else if pendingTail.isEmpty {
+                contextSource = parseData
+            } else {
+                contextSource = split.complete
+            }
             let contextTail = trimmedTrack2ContextTail(contextSource)
 
             updatedCursors[filePath] = Track2FileCursor(
@@ -2094,7 +2245,7 @@ struct ProviderCollectionRuntime: Sendable {
 
         let activePaths = Set(files.map(\.path))
         updatedCursors = updatedCursors.filter { activePaths.contains($0.key) }
-        Self.track2IncrementalState.setFileCursors(updatedCursors, homeKey: homeKey, provider: provider)
+        Self.track2IncrementalState.setFileCursors(updatedCursors, homeKey: homeKey, scope: scope)
 
         return points
     }
@@ -2151,7 +2302,17 @@ struct ProviderCollectionRuntime: Sendable {
             return data
         }
         let start = data.index(data.endIndex, offsetBy: -Self.track2ContextTailBytes)
-        return Data(data[start...])
+        let tail = data[start...]
+
+        // The budget is a byte count, so it lands wherever it lands — including
+        // inside a multi-byte character. Resuming at the next line boundary
+        // keeps the replayed prefix decodable; a single line longer than the
+        // whole budget has no boundary to find, which is why the parsers decode
+        // leniently as well.
+        guard let lineFeedIndex = tail.firstIndex(of: 0x0A) else {
+            return Data(tail)
+        }
+        return Data(tail[tail.index(after: lineFeedIndex)...])
     }
 
     private func track2StateHomeKey() -> String {
@@ -2313,23 +2474,38 @@ struct ProviderCollectionRuntime: Sendable {
         }
     }
 
+    /// Distinguishes the telemetry sources that share a provider. Cursor
+    /// eviction drops every path a call did not scan, so two sources writing
+    /// the same scope would wipe each other's cursors on every cycle and force
+    /// both to re-read their files from the start forever.
+    private enum Track2CursorSource: String {
+        case codexPrimary
+        case claudeSecondary
+        case piSession
+    }
+
+    private struct Track2CursorScope: Hashable {
+        var provider: ProviderId
+        var source: Track2CursorSource
+    }
+
     private final class Track2IncrementalState: @unchecked Sendable {
         private let lock = NSLock()
-        private var fileCursorsByHome: [String: [ProviderId: [String: Track2FileCursor]]] = [:]
+        private var fileCursorsByHome: [String: [Track2CursorScope: [String: Track2FileCursor]]] = [:]
         private var openCodeCursorByHome: [String: [ProviderId: Int64]] = [:]
 
-        func fileCursors(homeKey: String, provider: ProviderId) -> [String: Track2FileCursor] {
+        func fileCursors(homeKey: String, scope: Track2CursorScope) -> [String: Track2FileCursor] {
             lock.lock()
-            let cursors = fileCursorsByHome[homeKey]?[provider] ?? [:]
+            let cursors = fileCursorsByHome[homeKey]?[scope] ?? [:]
             lock.unlock()
             return cursors
         }
 
-        func setFileCursors(_ cursors: [String: Track2FileCursor], homeKey: String, provider: ProviderId) {
+        func setFileCursors(_ cursors: [String: Track2FileCursor], homeKey: String, scope: Track2CursorScope) {
             lock.lock()
-            var providerCursors = fileCursorsByHome[homeKey] ?? [:]
-            providerCursors[provider] = cursors
-            fileCursorsByHome[homeKey] = providerCursors
+            var scopedCursors = fileCursorsByHome[homeKey] ?? [:]
+            scopedCursors[scope] = cursors
+            fileCursorsByHome[homeKey] = scopedCursors
             lock.unlock()
         }
 

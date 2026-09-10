@@ -1129,6 +1129,378 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(claudePoints, [])
     }
 
+    func testPiTrack2AttributesSessionTurnsToTheProviderOwningTheModel() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-mixed.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-mixed", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                // The entry's ISO stamp deliberately disagrees with the
+                // message's: the per-message one wins.
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_010_000,
+                    entryTimestampMs: 1_770_000_015_000,
+                    usage: [
+                        "input": 100,
+                        "output": 50,
+                        "cacheRead": 20,
+                        "cacheWrite": 5,
+                        // cacheWrite1h is a subset of cacheWrite and reasoning
+                        // a subset of output; counting either again inflates
+                        // the turn.
+                        "cacheWrite1h": 5,
+                        "reasoning": 30,
+                        "totalTokens": 175,
+                    ]
+                ),
+                piAssistantEntry(
+                    id: "a2",
+                    provider: "openai",
+                    model: "gpt-5.6",
+                    timestampMs: 1_770_000_020_000,
+                    usage: ["input": 20, "output": 7, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 27]
+                ),
+                // Routed request: the requested model names no family, the
+                // model that answered does.
+                piAssistantEntry(
+                    id: "a3",
+                    provider: "openrouter",
+                    model: "openrouter/auto",
+                    responseModel: "anthropic/claude-opus-4-5",
+                    timestampMs: 1_770_000_030_000,
+                    usage: ["input": 10, "output": 2, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 12]
+                ),
+                piUserEntry(id: "u1", timestampMs: 1_770_000_005_000),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let claudePoints = try runtime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(claudePoints.count, 2)
+        XCTAssertTrue(claudePoints.allSatisfy { $0.provider == .claude })
+        XCTAssertTrue(claudePoints.allSatisfy { $0.sessionId == "ses-pi-mixed" })
+        XCTAssertTrue(claudePoints.allSatisfy { $0.parserVersion == "pi_track2_session_v1" })
+        XCTAssertTrue(claudePoints.allSatisfy { $0.sourceFile.hasPrefix("pi_session:") })
+        XCTAssertTrue(claudePoints.allSatisfy { $0.confidence == .medium })
+
+        XCTAssertEqual(claudePoints[0].timestamp, Date(timeIntervalSince1970: 1_770_000_010))
+        XCTAssertEqual(claudePoints[0].model, "claude-sonnet-4-5")
+        XCTAssertEqual(claudePoints[0].promptTokens, 125)
+        XCTAssertEqual(claudePoints[0].completionTokens, 50)
+        XCTAssertEqual(claudePoints[0].totalTokens, 175)
+
+        XCTAssertEqual(claudePoints[1].model, "anthropic/claude-opus-4-5")
+        XCTAssertEqual(claudePoints[1].promptTokens, 10)
+        XCTAssertEqual(claudePoints[1].completionTokens, 2)
+        XCTAssertEqual(claudePoints[1].totalTokens, 12)
+
+        let codexPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(codexPoints.count, 1)
+        XCTAssertEqual(codexPoints[0].provider, .codex)
+        XCTAssertEqual(codexPoints[0].model, "gpt-5.6")
+        XCTAssertEqual(codexPoints[0].promptTokens, 20)
+        XCTAssertEqual(codexPoints[0].completionTokens, 7)
+        XCTAssertEqual(codexPoints[0].totalTokens, 27)
+    }
+
+    func testPiTrack2IgnoresHistoryCopiedIntoForkedSessions() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        let sessionsDir = piSessionsDirectory(homeDirectoryURL: homeDir)
+        let originalTurn = piAssistantEntry(
+            id: "a1",
+            provider: "anthropic",
+            model: "claude-sonnet-4-5",
+            timestampMs: 1_770_000_010_000,
+            usage: ["input": 100, "output": 50, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 150]
+        )
+
+        try writePiSessionFile(
+            at: sessionsDir,
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-origin.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-origin", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [originalTurn]
+        )
+
+        // /fork and /clone copy prior entries verbatim into a new file but
+        // stamp a fresh header; without the header check the copied turn is
+        // counted a second time under a different session id, which the
+        // content dedup cannot collapse.
+        try writePiSessionFile(
+            at: sessionsDir,
+            fileName: "2026-02-02T02-41-00-000Z_ses-pi-fork.jsonl",
+            header: piSessionHeaderObject(
+                id: "ses-pi-fork",
+                startedAt: "2026-02-02T02:41:00Z",
+                parentSession: sessionsDir.appendingPathComponent("2026-02-02T02-40-00-000Z_ses-pi-origin.jsonl").path
+            ),
+            entries: [
+                originalTurn,
+                piAssistantEntry(
+                    id: "a2",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_070_000,
+                    usage: ["input": 7, "output": 4, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 11]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let points = try runtime.collectTrack2Points(provider: .claude)
+
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points.compactMap(\.totalTokens), [150, 11])
+        XCTAssertEqual(points.compactMap(\.sessionId), ["ses-pi-origin", "ses-pi-fork"])
+    }
+
+    func testPiTrack2DropsModelsOwnedByNeitherProvider() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-other.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-other", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "google",
+                    model: "gemini-3-pro",
+                    timestampMs: 1_770_000_010_000,
+                    usage: ["input": 40, "output": 9, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 49]
+                ),
+                // Zero-token turns carry nothing to chart.
+                piAssistantEntry(
+                    id: "a2",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_020_000,
+                    usage: ["input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let claudePoints = try runtime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(claudePoints, [])
+
+        let codexPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(codexPoints, [])
+    }
+
+    func testPiTrack2HonorsSessionDirectoryEnvironmentOverrides() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+        let sessionDirHome = dir.appendingPathComponent("session-dir-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirHome, withIntermediateDirectories: true)
+        let relocatedSessions = dir.appendingPathComponent("relocated-sessions", isDirectory: true)
+        try writePiSessionFile(
+            at: relocatedSessions,
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-relocated.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-relocated", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_010_000,
+                    usage: ["input": 7, "output": 4, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 11]
+                ),
+            ]
+        )
+
+        // Nothing lives at the default location, so the override is the only
+        // thing that can surface the session.
+        let unsetRuntime = ProviderCollectionRuntime(homeDirectoryURL: sessionDirHome)
+        let unsetPoints = try unsetRuntime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(unsetPoints, [])
+
+        let sessionDirRuntime = ProviderCollectionRuntime(
+            homeDirectoryURL: sessionDirHome,
+            environment: ["PI_CODING_AGENT_SESSION_DIR": relocatedSessions.path]
+        )
+        let sessionDirPoints = try sessionDirRuntime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(sessionDirPoints.count, 1)
+        XCTAssertEqual(sessionDirPoints[0].sessionId, "ses-pi-relocated")
+        XCTAssertEqual(sessionDirPoints[0].totalTokens, 11)
+
+        // PI_CODING_AGENT_DIR relocates the agent root instead, and pi expands
+        // a leading tilde against the home directory.
+        let agentDirHome = dir.appendingPathComponent("agent-dir-home", isDirectory: true)
+        try writePiSessionFile(
+            at: agentDirHome
+                .appendingPathComponent("custom-pi", isDirectory: true)
+                .appendingPathComponent("sessions", isDirectory: true),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-agent-dir.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-agent-dir", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_010_000,
+                    usage: ["input": 3, "output": 2, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 5]
+                ),
+            ]
+        )
+
+        let agentDirRuntime = ProviderCollectionRuntime(
+            homeDirectoryURL: agentDirHome,
+            environment: ["PI_CODING_AGENT_DIR": "~/custom-pi"]
+        )
+        let agentDirPoints = try agentDirRuntime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(agentDirPoints.count, 1)
+        XCTAssertEqual(agentDirPoints[0].sessionId, "ses-pi-agent-dir")
+        XCTAssertEqual(agentDirPoints[0].totalTokens, 5)
+    }
+
+    func testPiTrack2CountsCompactionTurnsAgainstTheSessionModel() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDir, withIntermediateDirectories: true)
+
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-compaction.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-compaction", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                // No per-message stamp, so the entry's ISO-8601 one has to
+                // carry this turn.
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "anthropic",
+                    model: "claude-sonnet-4-5",
+                    timestampMs: 1_770_000_010_000,
+                    includeMessageTimestamp: false,
+                    usage: ["input": 100, "output": 50, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 150]
+                ),
+                piCompactionEntry(
+                    id: "c1",
+                    timestampMs: 1_770_000_020_000,
+                    tokensBefore: 50_000,
+                    usage: ["input": 50_000, "output": 800, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 50_800]
+                ),
+                piModelChangeEntry(
+                    id: "m1",
+                    provider: "openai",
+                    modelId: "gpt-5.6",
+                    timestampMs: 1_770_000_030_000
+                ),
+                piBranchSummaryEntry(
+                    id: "c2",
+                    timestampMs: 1_770_000_040_000,
+                    usage: ["input": 900, "output": 100, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 1_000]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let claudePoints = try runtime.collectTrack2Points(provider: .claude)
+        XCTAssertEqual(claudePoints.count, 2)
+        XCTAssertEqual(claudePoints[0].timestamp, Date(timeIntervalSince1970: 1_770_000_010))
+        XCTAssertEqual(claudePoints[0].totalTokens, 150)
+        // The compaction turn names no model of its own; it is billed against
+        // whatever the session was running at the time.
+        XCTAssertEqual(claudePoints[1].model, "claude-sonnet-4-5")
+        XCTAssertEqual(claudePoints[1].promptTokens, 50_000)
+        XCTAssertEqual(claudePoints[1].completionTokens, 800)
+        XCTAssertEqual(claudePoints[1].totalTokens, 50_800)
+
+        // A model change moves subsequent summarization onto the other quota.
+        let codexPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(codexPoints.count, 1)
+        XCTAssertEqual(codexPoints[0].model, "gpt-5.6")
+        XCTAssertEqual(codexPoints[0].totalTokens, 1_000)
+    }
+
+    func testPiTrack2KeepsIncrementalCursorsWhenSharingAProviderWithCodexLogs() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let codexSessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-02", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexSessionsDir, withIntermediateDirectories: true)
+
+        try Data(
+            """
+            {"timestamp":1770000010,"session_id":"ses_codex","model":"gpt-5.6","input_tokens":3,"output_tokens":2}
+            """.appending("\n").utf8
+        ).write(to: codexSessionsDir.appendingPathComponent("main.jsonl"), options: [.atomic])
+
+        let piSessionURL = piSessionsDirectory(homeDirectoryURL: homeDir)
+            .appendingPathComponent("2026-02-02T02-40-00-000Z_ses-pi-codex.jsonl")
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-codex.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-codex", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "openai",
+                    model: "gpt-5.6",
+                    timestampMs: 1_770_000_020_000,
+                    usage: ["input": 20, "output": 7, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 27]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.count, 2)
+        XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [5, 27])
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 2)
+
+        // pi and the Codex primary parser scan different trees under the same
+        // provider, and cursor eviction drops every path a pass did not scan.
+        // Sharing one cursor scope would make each pass wipe the other's
+        // cursors, re-reading both files from byte 0 on every cycle.
+        let secondPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(secondPoints, [])
+
+        // Surviving cursors must still deliver appended bytes, or an
+        // over-aggressive skip would look identical to the assertion above.
+        try appendText(
+            """
+            {"timestamp":1770000030,"session_id":"ses_codex","model":"gpt-5.6","input_tokens":1,"output_tokens":1}
+            """.appending("\n"),
+            to: codexSessionsDir.appendingPathComponent("main.jsonl")
+        )
+        try appendPiEntry(
+            piAssistantEntry(
+                id: "a2",
+                provider: "openai",
+                model: "gpt-5.6",
+                timestampMs: 1_770_000_040_000,
+                usage: ["input": 4, "output": 3, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 7]
+            ),
+            to: piSessionURL
+        )
+
+        // Both parsers re-emit the lines still inside their context tail, so
+        // what proves the append landed is the count of genuinely new rows.
+        let thirdPoints = try runtime.collectTrack2Points(provider: .codex)
+        let thirdPersisted = try await runtime.persistTrack2Points(thirdPoints, store: track2Store)
+        XCTAssertEqual(thirdPersisted, 2)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [2, 5, 7, 27])
+    }
+
     func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
@@ -1175,6 +1547,90 @@ final class TokenMeterTests: XCTestCase {
         )
         XCTAssertEqual(appendedPoint.model, "gpt-5.3-codex")
         XCTAssertEqual(appendedPoint.totalTokens, 10)
+    }
+
+    func testTrack2IncrementalReaderReassemblesALineTornOnTheFirstScan() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-26", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        // The very first scan catches the agent mid-write: one complete event
+        // and a torn one, with no trailing newline.
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data(
+            """
+            {"timestamp":1770100000,"session_id":"ses_torn","model":"gpt-5.6","input_tokens":3,"output_tokens":2}
+            {"timestamp":1770100001,"session_id":"ses_torn","model":"gpt-5.6","input_tokens":7
+            """.utf8
+        ).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [5])
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 1)
+
+        try appendText(
+            """
+            ,"output_tokens":5}
+            {"timestamp":1770100002,"session_id":"ses_torn","model":"gpt-5.6","input_tokens":10,"output_tokens":10}
+            """.appending("\n"),
+            to: jsonlURL
+        )
+
+        // The torn line is buffered for replay, so keeping it in the context
+        // tail as well would glue it to a copy of itself — and the cursor has
+        // already moved past those bytes, so the event would be lost for good.
+        let secondPoints = try runtime.collectTrack2Points(provider: .codex)
+        let secondPersisted = try await runtime.persistTrack2Points(secondPoints, store: track2Store)
+        XCTAssertEqual(secondPersisted, 2)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [5, 12, 20])
+    }
+
+    func testTrack2ParsersSurviveABufferStartingMidCharacter() {
+        // The context tail is capped by a byte budget, so a replayed prefix can
+        // begin inside a multi-byte character when a single line outruns the
+        // budget. Rejecting the whole buffer there would drop every event in it
+        // while the cursor advanced regardless.
+        let tornCharacter = Data([0xED, 0x95]) // the leading bytes of "한"
+
+        var codexData = tornCharacter
+        codexData.append(Data(
+            "\n{\"timestamp\":1770100000,\"session_id\":\"ses_utf8\",\"model\":\"gpt-5.6\",\"input_tokens\":3,\"output_tokens\":2}\n".utf8
+        ))
+        let codexPoints = CodexTrack2PrimaryParser.timelinePoints(
+            from: codexData,
+            sourceFile: "sessions/utf8.jsonl",
+            initialModel: nil
+        ).points
+        XCTAssertEqual(codexPoints.compactMap(\.totalTokens), [5])
+
+        var claudeData = tornCharacter
+        claudeData.append(Data(
+            "\n{\"timestamp\":\"2026-02-02T02:40:10Z\",\"sessionId\":\"thr_utf8\",\"model\":\"claude-sonnet-4-5\",\"input_tokens\":7,\"output_tokens\":4}\n".utf8
+        ))
+        let claudePoints = ClaudeTrack2SecondaryParser.timelinePoints(
+            from: claudeData,
+            sourceFile: "projects/utf8.jsonl"
+        )
+        XCTAssertEqual(claudePoints.compactMap(\.totalTokens), [11])
+
+        var piData = tornCharacter
+        piData.append(Data(
+            "\n{\"type\":\"message\",\"id\":\"a1\",\"message\":{\"role\":\"assistant\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input\":9,\"output\":6,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":15},\"timestamp\":1770100000000}}\n".utf8
+        ))
+        let piPoints = PiTrack2Parser.timelinePoints(
+            from: piData,
+            sourceFile: "sessions/utf8.jsonl",
+            provider: .claude,
+            header: nil
+        )
+        XCTAssertEqual(piPoints.compactMap(\.totalTokens), [15])
     }
 
     func testCollectTrack1SnapshotClaudeParsesScopedLimitsArray() throws {
@@ -3057,6 +3513,178 @@ private func appendText(_ text: String, to url: URL) throws {
     if let data = text.data(using: .utf8) {
         try handle.write(contentsOf: data)
     }
+}
+
+private func piSessionsDirectory(homeDirectoryURL: URL) -> URL {
+    homeDirectoryURL
+        .appendingPathComponent(".pi", isDirectory: true)
+        .appendingPathComponent("agent", isDirectory: true)
+        .appendingPathComponent("sessions", isDirectory: true)
+        .appendingPathComponent("--Users-me-project--", isDirectory: true)
+}
+
+private func piSessionHeaderObject(
+    id: String,
+    startedAt: String,
+    parentSession: String? = nil
+) -> [String: Any] {
+    var object: [String: Any] = [
+        "type": "session",
+        "version": 3,
+        "id": id,
+        "timestamp": startedAt,
+        "cwd": "/Users/me/project",
+    ]
+    if let parentSession {
+        object["parentSession"] = parentSession
+    }
+    return object
+}
+
+private func piISOTimestamp(millisecondsSince1970: Int) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date(timeIntervalSince1970: Double(millisecondsSince1970) / 1000.0))
+}
+
+private func piAssistantEntry(
+    id: String,
+    provider: String,
+    model: String,
+    responseModel: String? = nil,
+    timestampMs: Int,
+    includeMessageTimestamp: Bool = true,
+    entryTimestampMs: Int? = nil,
+    usage: [String: Any]
+) -> [String: Any] {
+    var message: [String: Any] = [
+        "role": "assistant",
+        "content": [["type": "text", "text": "ok"]],
+        "api": "\(provider)-messages",
+        "provider": provider,
+        "model": model,
+        "usage": usage,
+        "stopReason": "stop",
+    ]
+    if let responseModel {
+        message["responseModel"] = responseModel
+    }
+    // Providers that report no per-message stamp leave only the entry's
+    // ISO-8601 one.
+    if includeMessageTimestamp {
+        message["timestamp"] = timestampMs
+    }
+
+    return [
+        "type": "message",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: entryTimestampMs ?? timestampMs),
+        "message": message,
+    ]
+}
+
+private func piUserEntry(id: String, timestampMs: Int) -> [String: Any] {
+    let message: [String: Any] = [
+        "role": "user",
+        "content": "hi",
+        "timestamp": timestampMs,
+    ]
+
+    return [
+        "type": "message",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "message": message,
+    ]
+}
+
+private func piModelChangeEntry(
+    id: String,
+    provider: String,
+    modelId: String,
+    timestampMs: Int
+) -> [String: Any] {
+    [
+        "type": "model_change",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "provider": provider,
+        "modelId": modelId,
+    ]
+}
+
+/// Summarizing the context is its own LLM call: pi records its usage on the
+/// compaction entry itself, with no message wrapper and no model field.
+private func piCompactionEntry(
+    id: String,
+    timestampMs: Int,
+    tokensBefore: Int,
+    usage: [String: Any]
+) -> [String: Any] {
+    [
+        "type": "compaction",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "summary": "User discussed X, Y, Z",
+        "firstKeptEntryId": "a1",
+        "tokensBefore": tokensBefore,
+        "usage": usage,
+    ]
+}
+
+/// Summarizing an abandoned branch carries usage the same way a compaction
+/// does.
+private func piBranchSummaryEntry(
+    id: String,
+    timestampMs: Int,
+    usage: [String: Any]
+) -> [String: Any] {
+    [
+        "type": "branch_summary",
+        "id": id,
+        "parentId": NSNull(),
+        "timestamp": piISOTimestamp(millisecondsSince1970: timestampMs),
+        "fromId": "a1",
+        "summary": "Branch explored approach A",
+        "usage": usage,
+    ]
+}
+
+private func piJSONLine(_ object: [String: Any]) throws -> String {
+    let data = try JSONSerialization.data(withJSONObject: object)
+    guard let line = String(data: data, encoding: .utf8) else {
+        throw NSError(
+            domain: "TokenMeterTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Failed to encode pi session JSON"]
+        )
+    }
+    return line
+}
+
+private func appendPiEntry(_ entry: [String: Any], to fileURL: URL) throws {
+    try appendText(piJSONLine(entry).appending("\n"), to: fileURL)
+}
+
+private func writePiSessionFile(
+    at directoryURL: URL,
+    fileName: String,
+    header: [String: Any],
+    entries: [[String: Any]]
+) throws {
+    try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+    var lines: [String] = []
+    for object in [header] + entries {
+        lines.append(try piJSONLine(object))
+    }
+
+    let payload = lines.joined(separator: "\n") + "\n"
+    try Data(payload.utf8).write(to: directoryURL.appendingPathComponent(fileName), options: [.atomic])
 }
 
 private func writeOpenCodeMessage(

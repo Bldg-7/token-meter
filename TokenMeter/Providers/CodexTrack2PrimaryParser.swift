@@ -18,9 +18,13 @@ struct CodexTrack2PrimaryParser {
         sourceFile: String,
         initialModel: String?
     ) -> ParseOutput {
-        guard let text = String(data: data, encoding: .utf8) else {
-            return ParseOutput(points: [], lastKnownModel: normalizedModel(initialModel))
-        }
+        // Decoded leniently: the incremental reader can hand over a buffer that
+        // starts mid-character, because the context tail it prepends is capped
+        // by a byte budget. A strict decode would reject the whole buffer and
+        // silently drop every event in it, cursor already advanced past them;
+        // a replacement character only spoils the partial line at the head,
+        // which fails to parse and is skipped.
+        let text = String(decoding: data, as: UTF8.self)
         return timelinePoints(fromJSONL: text, sourceFile: sourceFile, initialModel: initialModel)
     }
 

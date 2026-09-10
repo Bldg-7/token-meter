@@ -132,6 +132,9 @@ Dual parser:
 
 `~/.codex/history.jsonl` may be used for metadata only, not as token source of truth.
 
+Third-party agent sources that can run GPT models (section 5.3) also feed this
+provider.
+
 ## 5.2 Claude
 
 ### Track 1
@@ -145,6 +148,73 @@ Local timeline sources:
 
 1. `projects/*.jsonl`
 2. OpenCode local message logs (`~/.local/share/opencode/storage/message/**/*.json`, assistant-only)
+
+Third-party agent sources that can run Claude models (section 5.3) also feed
+this provider.
+
+## 5.3 Third-Party Agent Sources
+
+Agents that are not providers in their own right — they hold no quota and
+expose no usage endpoint, but spend the quota of the provider behind the model
+they call — are modelled as additional Track 2 *sources* rather than as
+providers. Each turn is attributed to the provider that owns the model, so a
+Claude model driven by another agent lands on the Claude timeline alongside
+Claude Code's own. Turns on models owned by neither provider (Gemini, DeepSeek,
+local models) have no home in the two-provider model and are dropped.
+
+These sources are Track 2 only. They must never contribute to Track 1, per the
+prohibitions in section 4.3.
+
+Each file-based source keeps its own incremental cursor scope, keyed by
+provider *and* source. The incremental reader evicts cursors for every path a
+pass did not scan, so two sources sharing a provider and a scope would erase
+each other's cursors on every cycle and re-read their files from the start
+forever.
+
+### OpenCode
+
+`~/.local/share/opencode/opencode.db` (SQLite), assistant rows only.
+
+### pi
+
+`~/.pi/agent/sessions/--<encoded cwd>--/<timestamp>_<session-id>.jsonl`, one
+append-only JSONL file per session. Assistant turns and the summarization
+entries described below are the token-bearing lines. pi supports Claude
+Pro/Max and ChatGPT subscription OAuth, so these turns draw down the same quota
+Track 1 already reports for those providers.
+
+Parsing rules that the format demands:
+
+- `usage.reasoning` is a subset of `usage.output` and `usage.cacheWrite1h` a
+  subset of `usage.cacheWrite`; neither may be added again.
+- `/fork` and `/clone` copy the source session's entries verbatim into a new
+  file while writing a fresh header. Turns older than their file's session
+  header are inherited history and must be skipped, or they are counted twice
+  under a second session id.
+- `responseModel` names the model that actually answered a routed request and
+  takes precedence over `model` for attribution.
+- `compaction` and `branch_summary` entries carry their summarization call's
+  `usage` at the entry level, with no message wrapper and no model field.
+  These are among the most expensive calls in a long session, and pi counts
+  them in its own totals, so they are attributed to the model the session was
+  last seen running, tracked forward from assistant turns and `model_change`
+  entries within the same parse buffer. That model is deliberately not carried
+  across incremental cycles: a point whose provider depends on how much
+  history the buffer happened to hold would be re-emitted under a different
+  key each time the context tail is re-read, defeating the content dedup. The
+  cost is that a summarization entry is skipped when no model precedes it in
+  the buffer, which is preferred over charting it against the wrong quota.
+- The session root follows `PI_CODING_AGENT_SESSION_DIR`, then
+  `PI_CODING_AGENT_DIR`, then `~/.pi/agent`. A GUI launch inherits no shell
+  exports, so those overrides only apply when the app itself was started with
+  them; there is no settings override, since a source has no settings of its
+  own.
+
+Known limitation: attribution is by model name first, provider hint second, so
+a locally served model whose name contains `gpt` (`gpt-oss-*` through a local
+runner, for example) is charted against the Codex timeline even though it costs
+nothing. Distinguishing it would need a provider allowlist keyed to pi's local
+runner ids.
 
 
 ## 6. CLI Tool Discovery Design
