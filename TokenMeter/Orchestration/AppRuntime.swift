@@ -2216,7 +2216,20 @@ struct ProviderCollectionRuntime: Sendable {
                 }
             }
 
-            let contextSource = parseData.isEmpty ? (previousCursor?.contextTail ?? Data()) : parseData
+            // Whatever stays buffered in `pendingTail` is replayed as a prefix
+            // on the next cycle, so it must not also be baked into the context
+            // tail: the fragment would be glued to a copy of itself and the
+            // entry it belongs to could never be reassembled. Only the
+            // full-read branch can hit that, since it parses the whole buffer
+            // including the torn trailing line.
+            let contextSource: Data
+            if parseData.isEmpty {
+                contextSource = previousCursor?.contextTail ?? Data()
+            } else if pendingTail.isEmpty {
+                contextSource = parseData
+            } else {
+                contextSource = split.complete
+            }
             let contextTail = trimmedTrack2ContextTail(contextSource)
 
             updatedCursors[filePath] = Track2FileCursor(
@@ -2289,7 +2302,17 @@ struct ProviderCollectionRuntime: Sendable {
             return data
         }
         let start = data.index(data.endIndex, offsetBy: -Self.track2ContextTailBytes)
-        return Data(data[start...])
+        let tail = data[start...]
+
+        // The budget is a byte count, so it lands wherever it lands — including
+        // inside a multi-byte character. Resuming at the next line boundary
+        // keeps the replayed prefix decodable; a single line longer than the
+        // whole budget has no boundary to find, which is why the parsers decode
+        // leniently as well.
+        guard let lineFeedIndex = tail.firstIndex(of: 0x0A) else {
+            return Data(tail)
+        }
+        return Data(tail[tail.index(after: lineFeedIndex)...])
     }
 
     private func track2StateHomeKey() -> String {

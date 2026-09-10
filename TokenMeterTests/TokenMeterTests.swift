@@ -1549,6 +1549,90 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(appendedPoint.totalTokens, 10)
     }
 
+    func testTrack2IncrementalReaderReassemblesALineTornOnTheFirstScan() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-26", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        // The very first scan catches the agent mid-write: one complete event
+        // and a torn one, with no trailing newline.
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data(
+            """
+            {"timestamp":1770100000,"session_id":"ses_torn","model":"gpt-5.6","input_tokens":3,"output_tokens":2}
+            {"timestamp":1770100001,"session_id":"ses_torn","model":"gpt-5.6","input_tokens":7
+            """.utf8
+        ).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [5])
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: track2Store)
+        XCTAssertEqual(firstPersisted, 1)
+
+        try appendText(
+            """
+            ,"output_tokens":5}
+            {"timestamp":1770100002,"session_id":"ses_torn","model":"gpt-5.6","input_tokens":10,"output_tokens":10}
+            """.appending("\n"),
+            to: jsonlURL
+        )
+
+        // The torn line is buffered for replay, so keeping it in the context
+        // tail as well would glue it to a copy of itself — and the cursor has
+        // already moved past those bytes, so the event would be lost for good.
+        let secondPoints = try runtime.collectTrack2Points(provider: .codex)
+        let secondPersisted = try await runtime.persistTrack2Points(secondPoints, store: track2Store)
+        XCTAssertEqual(secondPersisted, 2)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [5, 12, 20])
+    }
+
+    func testTrack2ParsersSurviveABufferStartingMidCharacter() {
+        // The context tail is capped by a byte budget, so a replayed prefix can
+        // begin inside a multi-byte character when a single line outruns the
+        // budget. Rejecting the whole buffer there would drop every event in it
+        // while the cursor advanced regardless.
+        let tornCharacter = Data([0xED, 0x95]) // the leading bytes of "한"
+
+        var codexData = tornCharacter
+        codexData.append(Data(
+            "\n{\"timestamp\":1770100000,\"session_id\":\"ses_utf8\",\"model\":\"gpt-5.6\",\"input_tokens\":3,\"output_tokens\":2}\n".utf8
+        ))
+        let codexPoints = CodexTrack2PrimaryParser.timelinePoints(
+            from: codexData,
+            sourceFile: "sessions/utf8.jsonl",
+            initialModel: nil
+        ).points
+        XCTAssertEqual(codexPoints.compactMap(\.totalTokens), [5])
+
+        var claudeData = tornCharacter
+        claudeData.append(Data(
+            "\n{\"timestamp\":\"2026-02-02T02:40:10Z\",\"sessionId\":\"thr_utf8\",\"model\":\"claude-sonnet-4-5\",\"input_tokens\":7,\"output_tokens\":4}\n".utf8
+        ))
+        let claudePoints = ClaudeTrack2SecondaryParser.timelinePoints(
+            from: claudeData,
+            sourceFile: "projects/utf8.jsonl"
+        )
+        XCTAssertEqual(claudePoints.compactMap(\.totalTokens), [11])
+
+        var piData = tornCharacter
+        piData.append(Data(
+            "\n{\"type\":\"message\",\"id\":\"a1\",\"message\":{\"role\":\"assistant\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input\":9,\"output\":6,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":15},\"timestamp\":1770100000000}}\n".utf8
+        ))
+        let piPoints = PiTrack2Parser.timelinePoints(
+            from: piData,
+            sourceFile: "sessions/utf8.jsonl",
+            provider: .claude,
+            header: nil
+        )
+        XCTAssertEqual(piPoints.compactMap(\.totalTokens), [15])
+    }
+
     func testCollectTrack1SnapshotClaudeParsesScopedLimitsArray() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
