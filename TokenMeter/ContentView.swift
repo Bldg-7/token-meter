@@ -15,7 +15,7 @@ struct ContentView: View {
     @State private var track2ProviderSelection: Track2ProviderSelection = .all
     @State private var loadError: String?
 
-  var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
 
@@ -106,21 +106,24 @@ struct ContentView: View {
                     }
                 }
             }
-        }
-        // Quit button in menu popover (localized label key: menu.quit)
-        Button(action: {
-            NSApplication.shared.terminate(nil)
-        }) {
-            Text(NSLocalizedString("menu.quit", comment: "Quit app"))
+
+            Divider()
+
+            // Quit button in menu popover (localized label key: menu.quit)
+            Button(action: {
+                NSApplication.shared.terminate(nil)
+            }) {
+                Text(NSLocalizedString("menu.quit", comment: "Quit app"))
+            }
         }
         .padding(16)
         .frame(width: 360)
-    .task {
-      await reload()
-    }
-    .onReceive(NotificationCenter.default.publisher(for: Notification.Name("TokenMeterStoreDidUpdate"))) { _ in
-      Task { await reload() }
-    }
+        .task {
+            await reload()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("TokenMeterStoreDidUpdate"))) { _ in
+            Task { await reload() }
+        }
     }
 
     private var header: some View {

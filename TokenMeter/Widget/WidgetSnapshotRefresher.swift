@@ -8,6 +8,7 @@ actor WidgetSnapshotRefresher {
     private let track1Store: Track1Store
     private let track2Store: Track2Store
     private let snapshotStore: WidgetSnapshotStore
+    private var lastWritten: WidgetSnapshot?
 
     init(
         track1Store: Track1Store = Track1Store(),
@@ -28,7 +29,20 @@ actor WidgetSnapshotRefresher {
             track2Points: points,
             now: now
         )
+
+        // WidgetKit budgets timeline reloads per day; asking for one when
+        // nothing but the generation stamp changed (settings saved with no
+        // edits, a cycle that produced no new data) spends that budget and
+        // delays reloads that carry real changes.
+        if var previous = lastWritten {
+            previous.generatedAt = widgetSnapshot.generatedAt
+            if previous == widgetSnapshot {
+                return
+            }
+        }
+
         try snapshotStore.write(widgetSnapshot)
+        lastWritten = widgetSnapshot
 
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: WidgetSharedConfig.codexWidgetKind)
