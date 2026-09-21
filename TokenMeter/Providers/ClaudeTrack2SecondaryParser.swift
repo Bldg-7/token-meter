@@ -443,9 +443,14 @@ private func asClaudeSecondaryNonEmptyString(_ value: Any) -> String? {
 }
 
 private func asClaudeSecondaryNonNegativeInt(_ value: Any) -> Int? {
+    // Range-checked: a corrupt log can carry a value no `Int` can hold (or
+    // "nan"/"inf" as text), and converting that would trap rather than degrade.
     if let number = value as? NSNumber {
-        let i = number.intValue
-        return i >= 0 ? i : nil
+        let d = number.doubleValue
+        guard d.isFinite, let i = Int(exactly: d.rounded()), i >= 0 else {
+            return nil
+        }
+        return i
     }
 
     if let s = value as? String {
@@ -453,8 +458,7 @@ private func asClaudeSecondaryNonNegativeInt(_ value: Any) -> Int? {
         if let i = Int(trimmed), i >= 0 {
             return i
         }
-        if let d = Double(trimmed) {
-            let i = Int(d)
+        if let d = Double(trimmed), d.isFinite, let i = Int(exactly: d.rounded()) {
             return i >= 0 ? i : nil
         }
     }
@@ -463,7 +467,8 @@ private func asClaudeSecondaryNonNegativeInt(_ value: Any) -> Int? {
 
 private func asClaudeSecondaryDate(_ value: Any) -> Date? {
     if let number = value as? NSNumber {
-        return claudeSecondaryDateFromEpoch(number.doubleValue)
+        let epoch = number.doubleValue
+        return epoch.isFinite ? claudeSecondaryDateFromEpoch(epoch) : nil
     }
 
     if let s = value as? String {
@@ -472,7 +477,7 @@ private func asClaudeSecondaryDate(_ value: Any) -> Date? {
             return nil
         }
         if let d = Double(trimmed) {
-            return claudeSecondaryDateFromEpoch(d)
+            return d.isFinite ? claudeSecondaryDateFromEpoch(d) : nil
         }
 
         let formatterWithFractional = ISO8601DateFormatter()
