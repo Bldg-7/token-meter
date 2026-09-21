@@ -2675,6 +2675,158 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(codexEvents[0].provider, .codex)
     }
 
+    func testTrack1AdaptersDegradeInsteadOfTrappingOnOutOfRangeReset() throws {
+        // 1e30 fits no Int64; converting it used to trap and take the app down.
+        let payload = """
+        {
+          "plan": "pro",
+          "windows": [
+            { "windowId": "weekly", "scope": "quota", "usedPercent": 10.0, "resetAt": 1e30 }
+          ]
+        }
+        """
+        let data = Data(payload.utf8)
+
+        let codex = try CodexTrack1MethodBAdapter.snapshot(from: data)
+        XCTAssertNil(codex.windows[0].resetAt)
+        XCTAssertEqual(codex.windows[0].usedPercent, 10.0)
+        XCTAssertEqual(codex.confidence, .medium)
+
+        let claudeMethodB = try ClaudeTrack1MethodBAdapter.snapshot(from: data)
+        XCTAssertNil(claudeMethodB.windows[0].resetAt)
+        XCTAssertEqual(claudeMethodB.confidence, .medium)
+
+        let claudeMethodC = try ClaudeTrack1MethodCAdapter.snapshot(from: data)
+        XCTAssertNil(claudeMethodC.windows[0].resetAt)
+        XCTAssertEqual(claudeMethodC.confidence, .medium)
+    }
+
+    func testTrack2ParsersSkipOutOfRangeTokenCountsWithoutTrapping() {
+        let jsonl = """
+        {"timestamp":"2026-01-02T03:04:05Z","session_id":"sess_a","model":"gpt-5","usage":{"prompt_tokens":"nan","completion_tokens":1e30,"total_tokens":"inf"}}
+        {"timestamp":"2026-01-02T03:06:05Z","session_id":"sess_b","model":"gpt-5","usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}
+        """
+
+        let codexPoints = CodexTrack2PrimaryParser.timelinePoints(from: Data(jsonl.utf8), sourceFile: "sessions/range.jsonl")
+        XCTAssertEqual(codexPoints.map(\.sessionId), ["sess_b"])
+        XCTAssertEqual(codexPoints.first?.totalTokens, 3)
+
+        let claudePoints = ClaudeTrack2SecondaryParser.timelinePoints(from: Data(jsonl.utf8), sourceFile: "projects/range.jsonl")
+        XCTAssertEqual(claudePoints.map(\.sessionId), ["sess_b"])
+        XCTAssertEqual(claudePoints.first?.totalTokens, 3)
+    }
+
+    func testPersistTrack1SnapshotKeepsUsageDuringCooldownAndPrunesHistory() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let store = Track1Store(snapshotsURLOverride: dir.appendingPathComponent("track1.json"))
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: dir)
+
+        func snapshot(at seconds: TimeInterval, usedPercent: Double?) -> Track1Snapshot {
+            Track1Snapshot(
+                provider: .claude,
+                observedAt: Date(timeIntervalSince1970: seconds),
+                source: .cliMethodB,
+                plan: .max,
+                windows: [
+                    Track1Window(
+                        windowId: .weekly,
+                        usedPercent: usedPercent,
+                        remainingPercent: nil,
+                        resetAt: nil,
+                        rawScopeLabel: "claude"
+                    ),
+                ],
+                confidence: usedPercent == nil ? .medium : .high,
+                parserVersion: "t1_fixture_v1"
+            )
+        }
+
+        let base: TimeInterval = 1_700_000_000
+        let withUsage = snapshot(at: base, usedPercent: 42)
+        let storedWithUsage = try await runtime.persistTrack1Snapshot(withUsage, store: store)
+        XCTAssertTrue(storedWithUsage)
+
+        // Plan-only fallback while /api/oauth/usage is throttled: held back so
+        // the widget keeps showing 42% for the cooldown instead of nothing.
+        let planOnly = snapshot(at: base + 60, usedPercent: nil)
+        let storedPlanOnly = try await runtime.persistTrack1Snapshot(planOnly, store: store)
+        XCTAssertFalse(storedPlanOnly)
+        let afterPlanOnly = try await store.loadAll()
+        XCTAssertEqual(afterPlanOnly, [withUsage])
+
+        // Once the usage figures are stale, a plan-only snapshot is stored again.
+        let stalePlanOnly = snapshot(at: base + 3 * 60 * 60, usedPercent: nil)
+        let storedStalePlanOnly = try await runtime.persistTrack1Snapshot(stalePlanOnly, store: store)
+        XCTAssertTrue(storedStalePlanOnly)
+        let afterStale = try await store.loadAll()
+        XCTAssertEqual(afterStale.count, 2)
+
+        // History past retention is pruned; the newest snapshot always survives.
+        let eightDaysLater = snapshot(at: base + 8 * 24 * 60 * 60, usedPercent: 7)
+        let storedLater = try await runtime.persistTrack1Snapshot(eightDaysLater, store: store)
+        XCTAssertTrue(storedLater)
+        let afterPrune = try await store.loadAll()
+        XCTAssertEqual(afterPrune, [eightDaysLater])
+    }
+
+    func testTrack2CursorCheckpointRestoresCursorsAfterFailedPersist() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-26", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data(
+            """
+            {"timestamp":1770100000,"session_id":"ses_rollback","model":"gpt-5.3-codex","input_tokens":3,"output_tokens":2}
+            """.appending("\n").utf8
+        ).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+
+        let checkpoint = runtime.track2CursorCheckpoint(provider: .codex)
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.count, 1)
+
+        // The store failed after the cursors advanced: with the cursors left as
+        // they are, this line would never be read again.
+        let advanced = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(advanced, [])
+
+        runtime.restoreTrack2Cursors(checkpoint, provider: .codex)
+        let replayed = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(replayed, firstPoints)
+    }
+
+    func testDiagnosticsRedactorMatchesCamelCaseCredentialKeys() {
+        let redactor = DiagnosticsRedactor()
+        let redacted = redactor.redactFields(
+            [
+                "accessToken": .string("sk-ant-oat01-secret"),
+                "nested": .object(["refreshToken": .string("secret_r"), "idToken": .string("secret_i")]),
+                "track": .string("track1"),
+            ]
+        )
+
+        guard case .string(let access) = redacted["accessToken"] else {
+            XCTFail("Expected accessToken to be redacted")
+            return
+        }
+        XCTAssertTrue(access.hasPrefix("<redacted:token:"))
+
+        guard case .object(let nested) = redacted["nested"],
+              case .string(let refresh) = nested["refreshToken"],
+              case .string(let id) = nested["idToken"]
+        else {
+            XCTFail("Expected nested camelCase tokens to be redacted")
+            return
+        }
+        XCTAssertTrue(refresh.hasPrefix("<redacted:token:"))
+        XCTAssertTrue(id.hasPrefix("<redacted:token:"))
+        XCTAssertEqual(redacted["track"], .string("track1"))
+    }
+
     func testDiagnosticsRedactorSensitiveKeyTagsAreDeterministic() {
         let redactor = DiagnosticsRedactor()
 
@@ -3824,7 +3976,10 @@ final class ClaudeOAuthUsageThrottleTests: XCTestCase {
         XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter(nil))
         XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("  "))
         XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("soon"))
-        XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("0"))
+        XCTAssertNil(ClaudeOAuthUsageThrottle.parseRetryAfter("-5"))
+        // Retry-After: 0 means "retry now", which must not turn into the
+        // 30 minute default cooldown.
+        XCTAssertEqual(ClaudeOAuthUsageThrottle.parseRetryAfter("0"), 0)
     }
 
     func testThrottleHoldsUntilRetryAfterElapses() {

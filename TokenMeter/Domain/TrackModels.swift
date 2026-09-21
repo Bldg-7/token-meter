@@ -48,6 +48,12 @@ struct Track1Snapshot: Codable, Equatable {
     /// Banked rate-limit reset credits still available to spend (Codex,
     /// June 2026 feature). nil when the provider/source does not report it.
     var resetCreditsAvailable: Int? = nil
+
+    /// Whether any window carries a utilization figure, as opposed to a
+    /// plan-only snapshot synthesized from a profile or auth status.
+    var hasUsageFigures: Bool {
+        windows.contains { $0.usedPercent != nil || $0.remainingPercent != nil }
+    }
 }
 
 struct Track2TimelinePoint: Codable, Equatable {

@@ -188,9 +188,78 @@ final class CollectionOrchestratorTests: XCTestCase {
         await orchestrator.stop()
     }
 
+    func testTimeoutReturnsEvenWhenOperationIgnoresCancellation() async {
+        let clock = ManualOrchestratorClock(nowNanoseconds: 0)
+        let log = CallLog()
+        let blocker = Blocker()
+
+        let key = CollectionRefreshKey(provider: .codex, track: .track1)
+        let unit = CollectionUnit(
+            key: key,
+            config: CollectionUnitConfig(
+                periodNanoseconds: 10,
+                timeoutNanoseconds: 5,
+                backoff: CollectionBackoffPolicy(baseNanoseconds: 10, maxNanoseconds: 100)
+            ),
+            operation: {
+                let t = await clock.nowNanoseconds()
+                await log.record(key: key, at: t)
+                // Never observes cancellation, like a child process stuck on a
+                // full pipe; only `blocker.release()` lets it return.
+                await blocker.block()
+            }
+        )
+
+        let orchestrator = CollectionOrchestrator(clock: clock, units: [unit])
+        await orchestrator.start()
+        await drainScheduler()
+        let c1 = await log.count(key: key)
+        XCTAssertEqual(c1, 1)
+
+        await clock.advance(byNanoseconds: 5)
+        await drainScheduler()
+        let afterTimeout = await orchestrator.healthSnapshot()
+        XCTAssertEqual(afterTimeout[key]?.lastError, "timeout")
+        XCTAssertEqual(afterTimeout[key]?.consecutiveFailures, 1)
+
+        // The backoff elapses while the runaway attempt is still stuck: no
+        // second attempt is stacked on top of it.
+        await clock.advance(byNanoseconds: 10)
+        await drainScheduler()
+        let c2 = await log.count(key: key)
+        XCTAssertEqual(c2, 1)
+        let stillRunning = await orchestrator.healthSnapshot()
+        XCTAssertEqual(stillRunning[key]?.lastError, "previous attempt still running")
+        XCTAssertEqual(stillRunning[key]?.consecutiveFailures, 2)
+
+        await orchestrator.stop()
+        await blocker.release()
+        await drainScheduler()
+    }
+
     private func drainScheduler(iterations: Int = 10000) async {
         for _ in 0..<iterations {
             await Task.yield()
+        }
+    }
+}
+
+/// Parks callers until released, standing in for work that ignores
+/// task cancellation.
+actor Blocker {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func block() async {
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        let released = waiters
+        waiters = []
+        for waiter in released {
+            waiter.resume()
         }
     }
 }

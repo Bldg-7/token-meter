@@ -276,36 +276,25 @@ struct CLIToolDiscovery {
         arguments: [String],
         timeoutSec: TimeInterval
     ) -> RunResult {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = arguments
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        let sema = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in sema.signal() }
-
+        let outcome: ProcessCaptureOutcome
         do {
-            try process.run()
+            outcome = try ProcessExecution.run(
+                executableURL: executableURL,
+                arguments: arguments,
+                timeoutSec: timeoutSec
+            )
         } catch {
             return .launchFailed
         }
 
-        if sema.wait(timeout: .now() + timeoutSec) == .timedOut {
-            process.terminate()
-            _ = sema.wait(timeout: .now() + 0.2)
+        switch outcome {
+        case .timedOut:
             return .timedOut
+        case .completed(_, let outData, let errData):
+            let out = String(data: outData, encoding: .utf8) ?? ""
+            let err = String(data: errData, encoding: .utf8) ?? ""
+            return .completed(output: out + (out.isEmpty || err.isEmpty ? "" : "\n") + err)
         }
-
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        let out = String(data: outData, encoding: .utf8) ?? ""
-        let err = String(data: errData, encoding: .utf8) ?? ""
-
-        return .completed(output: out + (out.isEmpty || err.isEmpty ? "" : "\n") + err)
     }
 
     private static func firstVersionLikeString(in text: String) -> String? {
@@ -333,5 +322,128 @@ struct CLIToolDiscovery {
         let path = url.path
         guard FileManager.default.fileExists(atPath: path) else { return false }
         return FileManager.default.isExecutableFile(atPath: path)
+    }
+}
+
+/// Outcome of running a child process to completion or to its deadline.
+enum ProcessCaptureOutcome: Sendable {
+    case completed(status: Int32, stdout: Data, stderr: Data)
+    /// The child outlived `timeoutSec` and was terminated; carries whatever it
+    /// had written by then.
+    case timedOut(stdout: Data, stderr: Data)
+}
+
+/// Runs a child process without the two classic Foundation pitfalls.
+///
+/// The stdout/stderr pipes are drained from the moment the child starts, so a
+/// child that writes more than the pipe buffer (64KB) can never block on
+/// `write` while the parent blocks in `waitUntilExit` — a deadlock neither
+/// side recovers from. And a deadline terminates a child that hangs (SIGTERM,
+/// then SIGKILL) instead of hanging the caller with it.
+///
+/// A child that is given no stdin gets `/dev/null` rather than inheriting the
+/// app's: a CLI launched from a terminal would otherwise see a TTY and may
+/// start an interactive session that never exits.
+enum ProcessExecution {
+    static func run(
+        executableURL: URL,
+        arguments: [String],
+        stdinData: Data? = nil,
+        stdinCloseDelaySec: TimeInterval = 0,
+        timeoutSec: TimeInterval
+    ) throws -> ProcessCaptureOutcome {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        var stdinPipe: Pipe?
+        if stdinData != nil {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            stdinPipe = pipe
+        } else {
+            process.standardInput = FileHandle.nullDevice
+        }
+
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+
+        try process.run()
+        let deadline = DispatchTime.now() + timeoutSec
+
+        let stdoutDrain = PipeDrain(handle: stdoutPipe.fileHandleForReading)
+        let stderrDrain = PipeDrain(handle: stderrPipe.fileHandleForReading)
+
+        var exitedBeforeDeadline = false
+        if let stdinData, let stdinPipe {
+            let handle = stdinPipe.fileHandleForWriting
+            // A child that exits before reading its stdin makes this write
+            // fail with EPIPE; the exit status tells the story, not the write.
+            try? handle.write(contentsOf: stdinData)
+            if stdinCloseDelaySec > 0 {
+                // Some tools answer only while stdin stays open; hold it, but
+                // wake as soon as the child exits on its own.
+                let holdUntil = min(deadline, DispatchTime.now() + stdinCloseDelaySec)
+                exitedBeforeDeadline = exited.wait(timeout: holdUntil) == .success
+            }
+            try? handle.close()
+        }
+
+        if exitedBeforeDeadline == false {
+            exitedBeforeDeadline = exited.wait(timeout: deadline) == .success
+        }
+
+        if exitedBeforeDeadline == false {
+            process.terminate()
+            if exited.wait(timeout: .now() + 1.0) != .success {
+                kill(process.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + 1.0)
+            }
+        }
+
+        // The pipes reach EOF once every holder of their write end is gone; a
+        // grandchild that inherited them can keep them open, so bound the wait.
+        let stdout = stdoutDrain.finish(within: 2.0)
+        let stderr = stderrDrain.finish(within: 2.0)
+
+        if exitedBeforeDeadline {
+            return .completed(status: process.terminationStatus, stdout: stdout, stderr: stderr)
+        }
+        return .timedOut(stdout: stdout, stderr: stderr)
+    }
+
+    /// Reads a pipe to EOF on a background thread from the moment it is
+    /// created, so the writer never stalls on a full pipe.
+    private final class PipeDrain: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private let done = DispatchSemaphore(value: 0)
+
+        init(handle: FileHandle) {
+            DispatchQueue.global(qos: .utility).async { [self] in
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty {
+                        break
+                    }
+                    lock.lock()
+                    data.append(chunk)
+                    lock.unlock()
+                }
+                done.signal()
+            }
+        }
+
+        func finish(within seconds: TimeInterval) -> Data {
+            _ = done.wait(timeout: .now() + seconds)
+            lock.lock()
+            defer { lock.unlock() }
+            return data
+        }
     }
 }

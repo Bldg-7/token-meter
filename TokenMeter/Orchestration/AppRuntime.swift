@@ -26,18 +26,24 @@ final class AppRuntime: ObservableObject {
         do {
             settings = try await SettingsStore.shared.load()
         } catch {
+            // A corrupt settings file must not leave the app silently idle;
+            // run on defaults and let the next save rewrite it.
             DiagnosticsLogger(provider: .codex).error("settings_load_failed", fields: ["error": .string(String(describing: error))])
             DiagnosticsLogger(provider: .claude).error("settings_load_failed", fields: ["error": .string(String(describing: error))])
-            return
+            settings = AppSettings()
         }
 
-        let periodNs = UInt64(max(1, settings.refreshIntervalSec)) * 1_000_000_000
+        let periodNs = UInt64(settings.effectiveRefreshIntervalSec) * 1_000_000_000
         // Claude quota windows are 5h/weekly, so polling faster than this buys
         // nothing and only risks the /api/oauth/usage rate limit.
         let claudeTrack1MinPeriodNs: UInt64 = 15 * 60 * 1_000_000_000
         let claudeTrack1PeriodNs = max(periodNs * 5, claudeTrack1MinPeriodNs)
-        let track1TimeoutNs: UInt64 = 2 * 1_000_000_000
-        let track2TimeoutNs: UInt64 = 15 * 1_000_000_000
+        // Track 1 chains up to two HTTP calls and several CLI invocations,
+        // each bounded on its own (HTTP 3-5s, CLI `ProcessRunner.liveTimeoutSec`);
+        // the unit timeout only has to outlast that chain. Track 2 must cover a
+        // first full scan of every session log on disk.
+        let track1TimeoutNs: UInt64 = 90 * 1_000_000_000
+        let track2TimeoutNs: UInt64 = 60 * 1_000_000_000
 
         var units: [CollectionUnit] = []
         units.reserveCapacity(4)
@@ -152,19 +158,39 @@ final class AppRuntime: ObservableObject {
 
                 switch track {
                 case .track1:
-                    let snapshot = try collector.collectTrack1Snapshot(provider: provider, settings: runtimeSettings)
-                    try await track1Store.append(snapshot)
+                    // Collection blocks on child processes and HTTP; keep that
+                    // off the cooperative thread pool the rest of the app runs on.
+                    let snapshot = try await AppRuntime.offloaded {
+                        try collector.collectTrack1Snapshot(provider: provider, settings: runtimeSettings)
+                    }
+                    let persisted = try await collector.persistTrack1Snapshot(snapshot, store: track1Store)
                     logger.info(
                         "collection_track1_success",
                         fields: [
                             "track": .string(track.rawValue),
                             "source": .string(snapshot.source.rawValue),
                             "windows": .int(snapshot.windows.count),
+                            "persisted": .bool(persisted),
                         ]
                     )
+                    guard persisted else {
+                        return
+                    }
                 case .track2:
-                    let points = try collector.collectTrack2Points(provider: provider)
-                    let persistedCount = try await collector.persistTrack2Points(points, store: track2Store)
+                    // Cursors advance as files are parsed; if the points then
+                    // fail to persist, roll them back so the next cycle re-reads
+                    // the same bytes instead of skipping them for good.
+                    let cursorCheckpoint = collector.track2CursorCheckpoint(provider: provider)
+                    let points = try await AppRuntime.offloaded {
+                        try collector.collectTrack2Points(provider: provider)
+                    }
+                    let persistedCount: Int
+                    do {
+                        persistedCount = try await collector.persistTrack2Points(points, store: track2Store)
+                    } catch {
+                        collector.restoreTrack2Cursors(cursorCheckpoint, provider: provider)
+                        throw error
+                    }
                     logger.info(
                         "collection_track2_success",
                         fields: [
@@ -183,6 +209,16 @@ final class AppRuntime: ObservableObject {
                 NotificationCenter.default.post(name: Notification.Name("TokenMeterStoreDidUpdate"), object: nil)
             }
         )
+    }
+
+    /// Runs blocking work on a GCD utility queue so it cannot park one of the
+    /// few cooperative-pool threads Swift concurrency shares across the app.
+    nonisolated private static func offloaded<T>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(with: Result { try work() })
+            }
+        }
     }
 
     nonisolated private static func phaseString(_ phase: CollectionUnitPhase) -> String {
@@ -245,7 +281,7 @@ final class ClaudeOAuthUsageThrottle: @unchecked Sendable {
         else { return nil }
 
         if let seconds = TimeInterval(trimmed) {
-            return seconds > 0 ? seconds : nil
+            return seconds >= 0 ? seconds : nil
         }
 
         let formatter = DateFormatter()
@@ -298,40 +334,19 @@ struct ProviderCollectionRuntime: Sendable {
             try run(executableURL, arguments, stdinData)
         }
 
+        /// Hard ceiling on a single CLI invocation. The orchestrator's unit
+        /// timeout is the outer bound; this keeps one wedged child from
+        /// consuming all of it.
+        static let liveTimeoutSec: TimeInterval = 20
+
         static let live = ProcessRunner(mode: .live, run: { executableURL, arguments, stdinData in
-            let process = Process()
-            process.executableURL = executableURL
-            process.arguments = arguments
-
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardOutput = stdout
-            process.standardError = stderr
-
-            var stdinPipe: Pipe?
-            if stdinData != nil {
-                let pipe = Pipe()
-                process.standardInput = pipe
-                stdinPipe = pipe
-            }
-
-            try process.run()
-
-            if let stdinData, let handle = stdinPipe?.fileHandleForWriting {
-                handle.write(stdinData)
-                try? handle.close()
-            }
-
-            process.waitUntilExit()
-
-            let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-
-            return ProcessRunResult(
-                status: process.terminationStatus,
-                stdout: stdoutData,
-                stderr: stderrData
+            let outcome = try ProcessExecution.run(
+                executableURL: executableURL,
+                arguments: arguments,
+                stdinData: stdinData,
+                timeoutSec: ProcessRunner.liveTimeoutSec
             )
+            return ProcessRunResult(outcome: outcome, executableURL: executableURL, timeoutSec: ProcessRunner.liveTimeoutSec)
         })
     }
 
@@ -339,6 +354,29 @@ struct ProviderCollectionRuntime: Sendable {
         var status: Int32
         var stdout: Data
         var stderr: Data
+
+        /// Exit status reported for a child that had to be terminated at its
+        /// deadline; no real exit code can be this value.
+        static let timedOutStatus: Int32 = -1
+
+        init(status: Int32, stdout: Data, stderr: Data) {
+            self.status = status
+            self.stdout = stdout
+            self.stderr = stderr
+        }
+
+        /// A timed-out child reads as a failed command so callers fall
+        /// through to their next candidate instead of aborting the cycle.
+        init(outcome: ProcessCaptureOutcome, executableURL: URL, timeoutSec: TimeInterval) {
+            switch outcome {
+            case .completed(let status, let stdout, let stderr):
+                self.init(status: status, stdout: stdout, stderr: stderr)
+            case .timedOut(let stdout, var stderr):
+                let note = "\n[token-meter] \(executableURL.lastPathComponent) terminated after \(Int(timeoutSec))s timeout\n"
+                stderr.append(Data(note.utf8))
+                self.init(status: ProcessRunResult.timedOutStatus, stdout: stdout, stderr: stderr)
+            }
+        }
     }
 
     struct HTTPRunResult: Sendable {
@@ -482,6 +520,21 @@ struct ProviderCollectionRuntime: Sendable {
         }
     }
 
+    /// Opaque copy of every Track 2 cursor `provider` owns, taken before a
+    /// collection so a failed persist can put them back.
+    struct Track2CursorCheckpoint: Sendable {
+        fileprivate var fileCursorsByHome: [String: [Track2CursorScope: [String: Track2FileCursor]]]
+        fileprivate var openCodeCursorByHome: [String: Int64]
+    }
+
+    func track2CursorCheckpoint(provider: ProviderId) -> Track2CursorCheckpoint {
+        Self.track2IncrementalState.checkpoint(provider: provider)
+    }
+
+    func restoreTrack2Cursors(_ checkpoint: Track2CursorCheckpoint, provider: ProviderId) {
+        Self.track2IncrementalState.restore(checkpoint, provider: provider)
+    }
+
     func collectTrack2Points(provider: ProviderId) throws -> [Track2TimelinePoint] {
         switch provider {
         case .codex:
@@ -489,6 +542,58 @@ struct ProviderCollectionRuntime: Sendable {
         case .claude:
             return try collectClaudeTrack2Points()
         }
+    }
+
+    /// Only the latest snapshot per provider and the last 24h (quota overlay
+    /// graph) are ever read; keep a week so track1.json cannot grow without
+    /// bound and be re-encoded in full on every cycle.
+    private static let track1RetentionInterval: TimeInterval = 7 * 24 * 60 * 60
+    /// How recent a usage-bearing snapshot must be for a plan-only snapshot
+    /// (the fallback while /api/oauth/usage is in Retry-After cooldown) to be
+    /// held back rather than hide it. Comfortably longer than the cooldown.
+    private static let track1UsageCarryInterval: TimeInterval = 2 * 60 * 60
+
+    /// Appends `snapshot`, prunes history past retention and returns whether
+    /// the snapshot was stored. A snapshot without any usage figures is
+    /// dropped while a recent one with figures is on file: the widget shows
+    /// only the latest snapshot, so storing it would blank the utilization for
+    /// the whole cooldown window.
+    func persistTrack1Snapshot(
+        _ snapshot: Track1Snapshot,
+        store: Track1Store
+    ) async throws -> Bool {
+        let existing = try await store.loadAll()
+
+        if snapshot.hasUsageFigures == false,
+           let latest = existing.last(where: { $0.provider == snapshot.provider }),
+           latest.hasUsageFigures,
+           latest.observedAt >= snapshot.observedAt.addingTimeInterval(-Self.track1UsageCarryInterval)
+        {
+            DiagnosticsLogger(provider: snapshot.provider).info(
+                "collection_track1_plan_only_snapshot_skipped",
+                fields: ["latestObservedAt": .string(ISO8601DateFormatter().string(from: latest.observedAt))]
+            )
+            return false
+        }
+
+        var merged = existing
+        merged.append(snapshot)
+
+        var latestByProvider: [ProviderId: Track1Snapshot] = [:]
+        for candidate in merged {
+            if let current = latestByProvider[candidate.provider], current.observedAt > candidate.observedAt {
+                continue
+            }
+            latestByProvider[candidate.provider] = candidate
+        }
+
+        let retentionStart = snapshot.observedAt.addingTimeInterval(-Self.track1RetentionInterval)
+        let retained = merged.filter { candidate in
+            candidate.observedAt >= retentionStart || latestByProvider[candidate.provider] == candidate
+        }
+
+        try await store.replaceAll(retained)
+        return true
     }
 
     /// Charts consume at most 24h of local telemetry; cap retained history so
@@ -1307,37 +1412,17 @@ struct ProviderCollectionRuntime: Sendable {
         stdinData: Data,
         stdinCloseDelaySec: TimeInterval = 2.0
     ) throws -> ProcessRunResult {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = ["app-server"]
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        let stdin = Pipe()
-
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = stdin
-
-        try process.run()
-
-        let stdinHandle = stdin.fileHandleForWriting
-        stdinHandle.write(stdinData)
-
-        // codex app-server rateLimits response can arrive >1s after requests; keep stdin open >=2s for reliability
-        Thread.sleep(forTimeInterval: stdinCloseDelaySec)
-        try? stdinHandle.close()
-
-        process.waitUntilExit()
-
-        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-
-        return ProcessRunResult(
-            status: process.terminationStatus,
-            stdout: stdoutData,
-            stderr: stderrData
+        // codex app-server answers the rateLimits request >1s after it is
+        // written and only while stdin stays open, so hold stdin for a moment
+        // before closing it; the deadline still bounds a server that never exits.
+        let outcome = try ProcessExecution.run(
+            executableURL: executableURL,
+            arguments: ["app-server"],
+            stdinData: stdinData,
+            stdinCloseDelaySec: stdinCloseDelaySec,
+            timeoutSec: ProcessRunner.liveTimeoutSec
         )
+        return ProcessRunResult(outcome: outcome, executableURL: executableURL, timeoutSec: ProcessRunner.liveTimeoutSec)
     }
 
     private func makeCodexAppServerRateLimitsRequestStream() -> Data {
@@ -2050,7 +2135,7 @@ struct ProviderCollectionRuntime: Sendable {
 
         let homeKey = track2StateHomeKey()
         let lastSeenRowID = Self.track2IncrementalState.openCodeCursor(homeKey: homeKey, provider: provider)
-        let rows = try queryOpenCodeAssistantRows(from: dbURL, afterRowID: lastSeenRowID)
+        let rows = try queryOpenCodeAssistantRows(from: dbURL, afterRowID: lastSeenRowID, provider: provider)
 
         var points: [Track2TimelinePoint] = []
         points.reserveCapacity(rows.count)
@@ -2073,15 +2158,28 @@ struct ProviderCollectionRuntime: Sendable {
         return points
     }
 
-    private func queryOpenCodeAssistantRows(from dbURL: URL, afterRowID: Int64) throws -> [OpenCodeAssistantRow] {
+    private func queryOpenCodeAssistantRows(
+        from dbURL: URL,
+        afterRowID: Int64,
+        provider: ProviderId
+    ) throws -> [OpenCodeAssistantRow] {
         guard FileManager.default.fileExists(atPath: dbURL.path) else {
             return []
         }
 
+        let logger = DiagnosticsLogger(provider: provider)
+        func sqliteFailure(_ stage: String, _ code: Int32, _ handle: OpaquePointer?) {
+            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite error \(code)"
+            logger.warning(
+                "opencode_sqlite_failed",
+                fields: ["stage": .string(stage), "code": .int(Int(code)), "message": .string(message)]
+            )
+        }
+
         var database: OpaquePointer?
-        guard sqlite3_open_v2(dbURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
-              let database
-        else {
+        let openCode = sqlite3_open_v2(dbURL.path, &database, SQLITE_OPEN_READONLY, nil)
+        guard openCode == SQLITE_OK, let database else {
+            sqliteFailure("open", openCode, database)
             if database != nil {
                 sqlite3_close(database)
             }
@@ -2107,12 +2205,14 @@ struct ProviderCollectionRuntime: Sendable {
         """
 
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
-              let statement
-        else {
+        let prepareCode = sqlite3_prepare_v2(database, sql, -1, &statement, nil)
+        guard prepareCode == SQLITE_OK, let statement else {
+            sqliteFailure("prepare", prepareCode, database)
             return []
         }
-        guard sqlite3_bind_int64(statement, 1, afterRowID) == SQLITE_OK else {
+        let bindCode = sqlite3_bind_int64(statement, 1, afterRowID)
+        guard bindCode == SQLITE_OK else {
+            sqliteFailure("bind", bindCode, database)
             sqlite3_finalize(statement)
             return []
         }
@@ -2454,7 +2554,7 @@ struct ProviderCollectionRuntime: Sendable {
         var fileSize: Int64
     }
 
-    private struct Track2FileCursor {
+    fileprivate struct Track2FileCursor {
         var inode: UInt64?
         var modifiedAt: TimeInterval
         var fileSize: Int64
@@ -2478,13 +2578,13 @@ struct ProviderCollectionRuntime: Sendable {
     /// eviction drops every path a call did not scan, so two sources writing
     /// the same scope would wipe each other's cursors on every cycle and force
     /// both to re-read their files from the start forever.
-    private enum Track2CursorSource: String {
+    fileprivate enum Track2CursorSource: String {
         case codexPrimary
         case claudeSecondary
         case piSession
     }
 
-    private struct Track2CursorScope: Hashable {
+    fileprivate struct Track2CursorScope: Hashable {
         var provider: ProviderId
         var source: Track2CursorSource
     }
@@ -2522,6 +2622,48 @@ struct ProviderCollectionRuntime: Sendable {
             providerCursors[provider] = cursor
             openCodeCursorByHome[homeKey] = providerCursors
             lock.unlock()
+        }
+
+        func checkpoint(provider: ProviderId) -> Track2CursorCheckpoint {
+            lock.lock()
+            defer { lock.unlock() }
+
+            var fileCursors: [String: [Track2CursorScope: [String: Track2FileCursor]]] = [:]
+            for (homeKey, scopedCursors) in fileCursorsByHome {
+                fileCursors[homeKey] = scopedCursors.filter { $0.key.provider == provider }
+            }
+
+            var openCodeCursors: [String: Int64] = [:]
+            for (homeKey, providerCursors) in openCodeCursorByHome {
+                if let cursor = providerCursors[provider] {
+                    openCodeCursors[homeKey] = cursor
+                }
+            }
+
+            return Track2CursorCheckpoint(fileCursorsByHome: fileCursors, openCodeCursorByHome: openCodeCursors)
+        }
+
+        /// Puts `provider`'s cursors back exactly as `checkpoint` recorded
+        /// them, leaving the other provider's untouched.
+        func restore(_ checkpoint: Track2CursorCheckpoint, provider: ProviderId) {
+            lock.lock()
+            defer { lock.unlock() }
+
+            let homeKeys = Set(fileCursorsByHome.keys).union(checkpoint.fileCursorsByHome.keys)
+            for homeKey in homeKeys {
+                var scopedCursors = (fileCursorsByHome[homeKey] ?? [:]).filter { $0.key.provider != provider }
+                for (scope, cursors) in checkpoint.fileCursorsByHome[homeKey] ?? [:] {
+                    scopedCursors[scope] = cursors
+                }
+                fileCursorsByHome[homeKey] = scopedCursors
+            }
+
+            let openCodeHomeKeys = Set(openCodeCursorByHome.keys).union(checkpoint.openCodeCursorByHome.keys)
+            for homeKey in openCodeHomeKeys {
+                var providerCursors = openCodeCursorByHome[homeKey] ?? [:]
+                providerCursors[provider] = checkpoint.openCodeCursorByHome[homeKey]
+                openCodeCursorByHome[homeKey] = providerCursors
+            }
         }
     }
 
