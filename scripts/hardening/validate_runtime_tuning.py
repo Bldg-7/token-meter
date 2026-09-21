@@ -25,9 +25,21 @@ CHECKS: List[Check] = [
     ),
     Check(
         file_path=os.path.join("TokenMeter", "Orchestration", "AppRuntime.swift"),
-        name="runtime_timeout_ns",
-        pattern=r"let\s+timeoutNs:\s*UInt64\s*=\s*([0-9]+)\s*\*\s*1_000_000_000",
-        expected="2",
+        name="runtime_track1_timeout_sec",
+        pattern=r"let\s+track1TimeoutNs:\s*UInt64\s*=\s*([0-9]+)\s*\*\s*1_000_000_000",
+        expected="90",
+    ),
+    Check(
+        file_path=os.path.join("TokenMeter", "Orchestration", "AppRuntime.swift"),
+        name="runtime_track2_timeout_sec",
+        pattern=r"let\s+track2TimeoutNs:\s*UInt64\s*=\s*([0-9]+)\s*\*\s*1_000_000_000",
+        expected="60",
+    ),
+    Check(
+        file_path=os.path.join("TokenMeter", "Orchestration", "AppRuntime.swift"),
+        name="runtime_process_timeout_sec",
+        pattern=r"static\s+let\s+liveTimeoutSec:\s*TimeInterval\s*=\s*([0-9]+)",
+        expected="20",
     ),
     Check(
         file_path=os.path.join(
@@ -91,6 +103,8 @@ def main(argv: Sequence[str]) -> int:
             print(f"[tuning] {f}")
         return 1
 
+    # --self-check exercises the same checks against the repository; it exists
+    # so release checklists can call every hardening script uniformly.
     if args.self_check:
         print("[tuning] self-check OK")
     else:

@@ -100,13 +100,18 @@ HARNESS_BIN="$TMP_DIR/idle_harness"
 echo "[idle] Building harness"
 xcrun swiftc -O -whole-module-optimization "$HARNESS_SW" -o "$HARNESS_BIN"
 
+# The value travels as an argument: `python3 -` takes its script from stdin,
+# so a piped value was never readable there and every sample parsed as 0.
 parse_ps_time_to_seconds() {
-  python3 - <<'PY'
+  python3 - "$1" <<'PY'
 import re
 import sys
 
-s = sys.stdin.read().strip()
-m = re.match(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$", s)
+# BSD ps (macOS) prints cumulative CPU time as m:ss.cc, optionally with
+# leading h: and d- parts; GNU ps prints [[dd-]hh:]mm:ss. Keep the
+# fractional part: an idle app accrues well under a second per minute.
+s = sys.argv[1].strip()
+m = re.match(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$", s)
 if not m:
     print("0")
     sys.exit(0)
@@ -114,9 +119,9 @@ if not m:
 days = int(m.group(1) or 0)
 hours = int(m.group(2) or 0)
 mins = int(m.group(3) or 0)
-secs = int(m.group(4) or 0)
+secs = float(m.group(4) or 0)
 total = (((days * 24 + hours) * 60 + mins) * 60) + secs
-print(str(total))
+print(repr(total))
 PY
 }
 
@@ -128,7 +133,7 @@ read_cpu_time_seconds() {
     echo "0"
     return
   fi
-  printf '%s' "$raw" | parse_ps_time_to_seconds
+  parse_ps_time_to_seconds "$raw"
 }
 
 read_rss_kb() {
@@ -279,8 +284,8 @@ run_once() {
   python3 - <<PY
 import json
 
-cpu_start = int(${cpu_start})
-cpu_end = int(${cpu_end})
+cpu_start = float(${cpu_start})
+cpu_end = float(${cpu_end})
 wall_start = float(${wall_start})
 wall_end = float(${wall_end})
 
