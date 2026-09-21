@@ -12,26 +12,28 @@ enum DiagnosticsRedactionKind: String, Sendable {
 }
 
 struct DiagnosticsRedactor {
+    /// Keys are compared after `normalizedKey`, so `accessToken`,
+    /// `access_token` and `ACCESS-TOKEN` all resolve to the same entry.
     private static let sensitiveKeyKinds: [(key: String, kind: DiagnosticsRedactionKind)] = [
         ("authorization", .bearer),
-        ("proxy-authorization", .bearer),
+        ("proxyauthorization", .bearer),
         ("cookie", .cookie),
-        ("set-cookie", .cookie),
-        ("x-api-key", .apiKey),
-        ("api-key", .apiKey),
+        ("setcookie", .cookie),
+        ("xapikey", .apiKey),
         ("apikey", .apiKey),
-        ("api_key", .apiKey),
         ("token", .token),
-        ("access_token", .token),
-        ("refresh_token", .token),
-        ("id_token", .token),
+        ("accesstoken", .token),
+        ("refreshtoken", .token),
+        ("idtoken", .token),
+        ("bearertoken", .token),
         ("session", .session),
         ("sessionid", .session),
         ("sid", .session),
         ("password", .password),
         ("passwd", .password),
         ("secret", .secret),
-        ("client_secret", .secret),
+        ("clientsecret", .secret),
+        ("privatekey", .secret),
     ]
 
     private let authorizationBearerRegex: NSRegularExpression
@@ -125,13 +127,20 @@ struct DiagnosticsRedactor {
     }
 
     private static func kindForSensitiveKey(_ key: String) -> DiagnosticsRedactionKind? {
-        let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalized = normalizedKey(key)
         for pair in sensitiveKeyKinds {
             if normalized == pair.key {
                 return pair.kind
             }
         }
         return nil
+    }
+
+    /// Lowercases and strips separators so camelCase, snake_case and
+    /// kebab-case spellings of a credential key all match.
+    private static func normalizedKey(_ key: String) -> String {
+        let scalars = key.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+        return String(String.UnicodeScalarView(scalars)).lowercased()
     }
 
     private func redactCookieHeaders(in message: String) -> String {
