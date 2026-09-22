@@ -2548,7 +2548,7 @@ struct ProviderCollectionRuntime: Sendable {
         var outputTokens: Int?
     }
 
-    private struct Track2FileMetadata {
+    fileprivate struct Track2FileMetadata {
         var inode: UInt64?
         var modifiedAt: TimeInterval
         var fileSize: Int64

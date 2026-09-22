@@ -421,13 +421,15 @@ enum ProcessExecution {
     /// created, so the writer never stalls on a full pipe.
     private final class PipeDrain: @unchecked Sendable {
         private let lock = NSLock()
+        private let handle: FileHandle
         private var data = Data()
         private let done = DispatchSemaphore(value: 0)
 
         init(handle: FileHandle) {
+            self.handle = handle
             DispatchQueue.global(qos: .utility).async { [self] in
                 while true {
-                    let chunk = handle.availableData
+                    let chunk = self.handle.availableData
                     if chunk.isEmpty {
                         break
                     }
