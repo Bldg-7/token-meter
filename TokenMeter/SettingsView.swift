@@ -7,6 +7,10 @@ struct SettingsView: View {
     @State private var loadError: String?
     @State private var saveError: String?
     @State private var didLoad: Bool = false
+    /// What is on disk; `onChange` fires once right after `loadSettings`
+    /// assigns the loaded values, and must not write them straight back.
+    @State private var lastSavedSettings: AppSettings = AppSettings()
+    @State private var pendingSaveTask: Task<Void, Never>?
 
     @State private var diagnosticsLines: [String] = []
     @State private var diagnosticsError: String?
@@ -175,37 +179,52 @@ struct SettingsView: View {
             await loadSettings()
         }
         .onChange(of: settings.claude.allowMethodC) { _ in
-            guard didLoad else { return }
-            Task {
-                await saveSettings()
-            }
+            saveSettingsIfChanged()
         }
         .onChange(of: settings.codex.enabled) { _ in
-            guard didLoad else { return }
-            Task { await saveSettings() }
+            saveSettingsIfChanged()
         }
         .onChange(of: settings.claude.enabled) { _ in
-            guard didLoad else { return }
-            Task { await saveSettings() }
+            saveSettingsIfChanged()
         }
         .onChange(of: settings.locale) { _ in
             guard didLoad else { return }
             appLocale.setSetting(settings.locale)
-            Task { await saveSettings() }
+            saveSettingsIfChanged()
         }
         .onChange(of: settings.widgetTrack2TimeScale) { _ in
-            guard didLoad else { return }
-            Task { await saveSettings() }
+            saveSettingsIfChanged()
         }
         .onChange(of: settings.codex.cliPathOverride) { _ in
             guard didLoad else { return }
-            Task { await saveSettings() }
+            scheduleSettingsSave()
             scheduleCodexProbe()
         }
         .onChange(of: settings.claude.cliPathOverride) { _ in
             guard didLoad else { return }
-            Task { await saveSettings() }
+            scheduleSettingsSave()
             scheduleClaudeProbe()
+        }
+    }
+
+    @MainActor
+    private func saveSettingsIfChanged() {
+        guard didLoad, settings != lastSavedSettings else { return }
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
+        Task { await saveSettings() }
+    }
+
+    /// Path overrides arrive one keystroke at a time; each save rewrites the
+    /// settings file, rebuilds the widget snapshot and reloads the widgets,
+    /// so coalesce them the way the version probes already are.
+    @MainActor
+    private func scheduleSettingsSave() {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard Task.isCancelled == false else { return }
+            saveSettingsIfChanged()
         }
     }
 
@@ -382,6 +401,7 @@ struct SettingsView: View {
     private func loadSettings() async {
         do {
             settings = try await SettingsStore.shared.load()
+            lastSavedSettings = settings
             loadError = nil
             didLoad = true
 
@@ -399,8 +419,10 @@ struct SettingsView: View {
     @MainActor
     private func saveSettings() async {
         do {
-            try await SettingsStore.shared.save(settings)
-            try await WidgetSnapshotRefresher().refresh(settings: settings)
+            let saved = settings
+            try await SettingsStore.shared.save(saved)
+            lastSavedSettings = saved
+            try await WidgetSnapshotRefresher().refresh(settings: saved)
             NotificationCenter.default.post(name: Notification.Name("TokenMeterStoreDidUpdate"), object: nil)
             saveError = nil
         } catch {

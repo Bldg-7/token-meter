@@ -169,7 +169,9 @@ private struct MethodBWindow: Decodable {
         self.scopeLabel = try decodeFirst(String.self, keys: [.scope, .scopeLabel, .scope_label, .rawScopeLabel, .raw_scope_label]) ?? ""
         self.usedPercent = try decodeFirst(Double.self, keys: [.usedPercent, .used_percent, .usedPct, .used_pct])
         self.remainingPercent = try decodeFirst(Double.self, keys: [.remainingPercent, .remaining_percent, .remainingPct, .remaining_pct])
-        self.resetAt = try decodeFirst(FlexibleDate.self, keys: [.resetAt, .reset_at, .resetsAt, .resets_at, .reset, .resetTs, .reset_ts])
+        // A reset value in a shape no parser accepts degrades the window to
+        // "no reset known" instead of rejecting the whole payload.
+        self.resetAt = try? decodeFirst(FlexibleDate.self, keys: [.resetAt, .reset_at, .resetsAt, .resets_at, .reset, .resetTs, .reset_ts])
     }
 }
 
@@ -189,8 +191,10 @@ private struct FlexibleDate: Decodable {
             self.date = FlexibleDate.fromEpochSecondsOrMillis(i)
             return
         }
-        if let d = try? c.decode(Double.self) {
-            self.date = FlexibleDate.fromEpochSecondsOrMillis(Int64(d))
+        // Range-checked: JSON can carry a value no Int64 holds (1e30, for
+        // example) and a direct conversion would trap rather than degrade.
+        if let d = try? c.decode(Double.self), d.isFinite, let epoch = Int64(exactly: d.rounded()) {
+            self.date = FlexibleDate.fromEpochSecondsOrMillis(epoch)
             return
         }
 

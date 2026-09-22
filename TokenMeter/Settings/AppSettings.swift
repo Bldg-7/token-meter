@@ -111,6 +111,17 @@ struct AppSettings: Codable, Equatable {
     var refreshIntervalSec: Int
     var widgetTrack2TimeScale: Track2WidgetTimeScale
 
+    /// Bounds the poll period can take. Below the floor the app would hammer
+    /// the CLIs and quota endpoints; above the ceiling the nanosecond
+    /// arithmetic in the orchestrator would overflow.
+    static let refreshIntervalRange: ClosedRange<Int> = 5...(24 * 60 * 60)
+
+    /// `refreshIntervalSec` clamped into `refreshIntervalRange`; a hand-edited
+    /// settings file cannot take the scheduler out of bounds.
+    var effectiveRefreshIntervalSec: Int {
+        min(max(refreshIntervalSec, Self.refreshIntervalRange.lowerBound), Self.refreshIntervalRange.upperBound)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case codex
         case claude

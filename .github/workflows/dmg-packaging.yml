@@ -22,14 +22,27 @@ on:
 permissions:
   contents: write
 
+# Two runs for the same tag would race each other's `--clobber` uploads and
+# appcast; queue them instead.
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-26
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      # Step-level `env` is not visible to that step's own `if`, so secret
+      # presence is resolved once here. Signing needs the certificate, its
+      # password and the identity; notarization needs an App Store Connect
+      # API key. All are optional: without them the build is ad-hoc signed,
+      # which Gatekeeper blocks on first launch.
+      HAS_CODESIGN: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_CODESIGN_IDENTITY != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_API_KEY_ID != '' && secrets.NOTARY_API_ISSUER_ID != '' && secrets.NOTARY_API_KEY_P8_BASE64 != '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Resolve release variables
         id: vars
@@ -79,21 +92,53 @@ jobs:
             echo "Missing required secret: SPARKLE_PRIVATE_KEY" >&2
             exit 1
           fi
+          echo "[SECRETS] codesign=${HAS_CODESIGN} notarize=${HAS_NOTARY}"
 
       - name: Stamp version into Info.plist
         env:
           VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
-          PLIST="TokenMeter/Info.plist"
           BUILD_NUMBER="$(date -u +%Y%m%d%H%M%S)"
-          plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
-          plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$PLIST"
+          # The extension's version must match the host app's or notarization
+          # and Gatekeeper reject the bundle.
+          for PLIST in TokenMeter/Info.plist TokenMeterWidget/Info.plist; do
+            plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
+            plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$PLIST"
+          done
           echo "[VERSION] CFBundleShortVersionString=$VERSION  CFBundleVersion=$BUILD_NUMBER"
+
+      - name: Import signing certificate
+        if: env.HAS_CODESIGN == 'true'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          rm -f "$CERT_PATH"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Build Xcode Project (Release)
         run: |
           set -euo pipefail
+          # Always built ad-hoc: Xcode's manual signing demands a provisioning
+          # profile for the App Groups capability, which Developer ID
+          # distribution neither needs nor gets. The real signature is applied
+          # below with codesign, inside out.
           xcodebuild \
             -project TokenMeter.xcodeproj \
             -scheme TokenMeter \
@@ -103,6 +148,76 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=YES \
             -quiet
+
+      - name: Sign app (Developer ID, hardened runtime)
+        if: env.HAS_CODESIGN == 'true'
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release/TokenMeter.app"
+          sign() {
+            codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$@"
+          }
+
+          # Sparkle ships helpers that must be signed before the framework that
+          # contains them, in the order its documentation gives. The XPC
+          # services keep the entitlements Sparkle built them with.
+          SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+          if [[ -d "$SPARKLE" ]]; then
+            SPARKLE_VERSION="$SPARKLE/Versions/B"
+            for xpc in "$SPARKLE_VERSION"/XPCServices/*.xpc; do
+              if [[ -d "$xpc" ]]; then
+                sign --preserve-metadata=entitlements "$xpc"
+              fi
+            done
+            if [[ -f "$SPARKLE_VERSION/Autoupdate" ]]; then
+              sign "$SPARKLE_VERSION/Autoupdate"
+            fi
+            if [[ -d "$SPARKLE_VERSION/Updater.app" ]]; then
+              sign "$SPARKLE_VERSION/Updater.app"
+            fi
+            sign "$SPARKLE"
+          fi
+
+          # Any other embedded framework or library.
+          if [[ -d "$APP/Contents/Frameworks" ]]; then
+            find "$APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 \
+              \( -name '*.framework' -o -name '*.dylib' \) ! -name 'Sparkle.framework' -print0 |
+              while IFS= read -r -d '' item; do
+                sign "$item"
+              done
+          fi
+
+          # The widget extension carries its own (sandboxed) entitlements; the
+          # app is signed last so its seal covers everything above.
+          sign --entitlements TokenMeterWidget/TokenMeterWidget.entitlements \
+            "$APP/Contents/PlugIns/TokenMeterWidgetExtension.appex"
+          sign --entitlements TokenMeter/TokenMeter.entitlements "$APP"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "[SIGN] $(codesign -dvv "$APP" 2>&1 | grep -E '^(Authority=Developer ID|CodeDirectory)' | head -n 2 | tr '\n' ' ')"
+
+      - name: Notarize and staple app
+        if: env.HAS_CODESIGN == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          NOTARY_API_KEY_P8_BASE64: ${{ secrets.NOTARY_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release/TokenMeter.app"
+          KEY_PATH="$RUNNER_TEMP/notary_key.p8"
+          SUBMISSION_ZIP="$RUNNER_TEMP/TokenMeter-notarize.zip"
+          printf '%s' "$NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+
+          # The app is notarized once, before packaging, so both the DMG and
+          # the Sparkle ZIP carry a stapled bundle.
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$SUBMISSION_ZIP"
+          xcrun notarytool submit "$SUBMISSION_ZIP" --wait \
+            --key "$KEY_PATH" --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER_ID"
+          xcrun stapler staple "$APP_PATH"
+          rm -f "$KEY_PATH" "$SUBMISSION_ZIP"
 
       - name: Prepare scripts
         run: |
@@ -129,27 +244,41 @@ jobs:
             --derived-data-path "./build" \
             --sparkle-private-key-env "SPARKLE_PRIVATE_KEY"
 
-      - name: Sign DMG (optional)
-        if: ${{ env.CODESIGN_IDENTITY != '' }}
+      - name: Sign DMGs
+        if: env.HAS_CODESIGN == 'true'
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
         run: |
           set -euo pipefail
-          DMG_PATH="$(ls -1 dist/*.dmg | head -n 1)"
-          echo "[SIGN] Signing $DMG_PATH"
-          codesign --force --sign "$CODESIGN_IDENTITY" --timestamp "$DMG_PATH"
-          codesign --verify --verbose=2 "$DMG_PATH"
+          # Both the versioned image and the stable-name copy ship; sign each.
+          for DMG_PATH in dist/*.dmg; do
+            echo "[SIGN] Signing $DMG_PATH"
+            codesign --force --sign "$CODESIGN_IDENTITY" --timestamp "$DMG_PATH"
+            codesign --verify --verbose=2 "$DMG_PATH"
+          done
 
-      - name: Notarize DMG (optional)
-        if: ${{ env.NOTARY_PROFILE != '' }}
+      - name: Notarize and staple DMGs
+        if: env.HAS_CODESIGN == 'true' && env.HAS_NOTARY == 'true'
         env:
-          NOTARY_PROFILE: ${{ secrets.NOTARYTOOL_KEYCHAIN_PROFILE }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          NOTARY_API_KEY_P8_BASE64: ${{ secrets.NOTARY_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
-          DMG_PATH="$(ls -1 dist/*.dmg | head -n 1)"
-          echo "[NOTARY] Submitting $DMG_PATH"
-          xcrun notarytool submit "$DMG_PATH" --wait --keychain-profile "$NOTARY_PROFILE"
-          xcrun stapler staple "$DMG_PATH"
+          KEY_PATH="$RUNNER_TEMP/notary_key.p8"
+          printf '%s' "$NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+          for DMG_PATH in dist/*.dmg; do
+            echo "[NOTARY] Submitting $DMG_PATH"
+            xcrun notarytool submit "$DMG_PATH" --wait \
+              --key "$KEY_PATH" --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER_ID"
+            xcrun stapler staple "$DMG_PATH"
+          done
+          rm -f "$KEY_PATH"
+
+      - name: Remove signing keychain
+        if: always() && env.KEYCHAIN_PATH != ''
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" || true
 
       - name: Create or update GitHub release
         env:
@@ -179,9 +308,12 @@ jobs:
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             echo "[RELEASE] Creating new release $TAG"
+            # A tag created here must point at the commit that was built, not
+            # at whatever the default branch's head happens to be.
             CREATE_ARGS=(
               "$TAG"
               "${ASSETS[@]}"
+              --target "$GITHUB_SHA"
               --title "TokenMeter ${VERSION}"
               --notes "Automated release for ${TAG}"
             )
@@ -193,7 +325,7 @@ jobs:
 
       - name: Upload workflow artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: TokenMeter-Release-Bundle
           path: |

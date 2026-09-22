@@ -35,6 +35,18 @@ PATTERNS: List[Pattern] = [
     Pattern("google_api_key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")),
     Pattern("twilio_secret", re.compile(r"\bSK[0-9a-fA-F]{32}\b")),
     Pattern("twilio_account_sid", re.compile(r"\bAC[0-9a-fA-F]{32}\b")),
+    # Credentials this app actually handles: Claude OAuth access tokens,
+    # ChatGPT session JWTs and Sparkle EdDSA private keys.
+    Pattern("anthropic_oauth_token", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
+    Pattern(
+        "jwt",
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    ),
+    Pattern("bearer_token", re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}")),
+    Pattern(
+        "sparkle_private_key_assignment",
+        re.compile(r"(?i)\b(sparkle[_-]?private[_-]?key|ed[_-]?key)\b\s*[:=]\s*['\"]?[A-Za-z0-9+/]{40,}={0,2}"),
+    ),
     Pattern(
         "generic_assignment",
         re.compile(
@@ -102,7 +114,7 @@ def iter_files(
 
     for p in paths:
         if not os.path.exists(p):
-            continue
+            raise FileNotFoundError(p)
         if os.path.isfile(p):
             rp = rel(p)
             if not is_excluded(rp, exclude_dir_prefixes):
@@ -178,8 +190,11 @@ def scan_paths(paths: Sequence[str], allowlist_path: str) -> List[Finding]:
             try:
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
-                continue
-        except Exception:
+                # Logs are not always UTF-8; a lossy decode still exposes
+                # ASCII-shaped tokens, which is what every pattern targets.
+                text = raw.decode("latin-1")
+        except Exception as e:
+            print(f"[secret-scan] WARN unreadable {rel_path}: {e}", file=sys.stderr)
             continue
 
         for finding in scan_text(rel_path, text):
@@ -197,14 +212,26 @@ def cmd_self_check(allowlist: str) -> int:
         with open(p, "w", encoding="utf-8") as f:
             f.write(json.dumps({"message": f"Authorization: Bearer {fake}"}) + "\n")
 
+        fake_anthropic = "sk-ant-oat01-" + ("b" * 40)
+        fake_jwt = "eyJ" + ("c" * 20) + "." + ("d" * 20) + "." + ("e" * 20)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"accessToken": fake_anthropic}) + "\n")
+            f.write(json.dumps({"id_token": fake_jwt}) + "\n")
+
         findings = scan_paths([p], allowlist)
         if not findings:
             print("[secret-scan] self-check FAIL: expected a finding")
             return 1
-        for fd in findings:
-            if fake in fd.match_preview:
-                print("[secret-scan] self-check FAIL: preview leaked full token")
+        found_ids = {fd.pattern_id for fd in findings}
+        for required in ("github_token_ghp", "anthropic_oauth_token", "jwt"):
+            if required not in found_ids:
+                print(f"[secret-scan] self-check FAIL: pattern {required} did not fire")
                 return 1
+        for fd in findings:
+            for secret in (fake, fake_anthropic, fake_jwt):
+                if secret in fd.match_preview:
+                    print("[secret-scan] self-check FAIL: preview leaked full token")
+                    return 1
         print("[secret-scan] self-check OK")
         return 0
 
@@ -229,7 +256,12 @@ def main(argv: Sequence[str]) -> int:
     if args.self_check:
         return cmd_self_check(args.allowlist)
 
-    findings = scan_paths(args.paths, args.allowlist)
+    try:
+        findings = scan_paths(args.paths, args.allowlist)
+    except FileNotFoundError as e:
+        # A missing target must not read as a clean scan.
+        print(f"Error: path not found: {e}", file=sys.stderr)
+        return 2
     if not findings:
         print("[secret-scan] OK")
         return 0

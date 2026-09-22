@@ -42,7 +42,10 @@ fi
 #######################################
 # Patterns to detect secret-like content
 #######################################
-patterns="Authorization[:space:]*Bearer[[:space:]]+[A-Za-z0-9._-]+|BEGIN PRIVATE KEY|BEGIN RSA PRIVATE KEY|AIza[A-Za-z0-9_-]{35,}|api[_-]key[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+|apikey[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+|access[_-]token[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+|password[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+"
+# Extended regex (grep -E). Kept free of \b and non-bracket classes: BSD grep
+# on macOS and GNU grep on Linux must both parse it, and a pattern grep
+# rejects would otherwise read as "no match" (see the exit-code check below).
+patterns="Authorization[[:space:]]*:?[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._~+/=-]+|Bearer[[:space:]]+[A-Za-z0-9._~+/=-]{20,}|BEGIN( [A-Z]+)? PRIVATE KEY|AIza[A-Za-z0-9_-]{35,}|sk-ant-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|api[_-]?key[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+|access[_-]?token[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+|refresh[_-]?token[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+|password[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._-]+"
 
 matches=0
 declare -a matched_files
@@ -54,17 +57,36 @@ fi
 
 printf "Redaction check: scanning directories: %s\n" "${search_dirs[*]}"
 
+# A pattern grep cannot parse, or a file it cannot read, exits 2; that must
+# fail the check rather than count as "nothing found".
+scanned_files=0
 for dir in "${search_dirs[@]}"; do
   if [ ! -d "$dir" ]; then
-    continue
+    echo "FAIL: directory not found: $dir" >&2
+    exit 2
   fi
   while IFS= read -r -d '' f; do
-  if grep -I -i -E -n -H "$patterns" "$f" >/dev/null 2>&1; then
-      matches=$((matches+1))
-      matched_files+=("$f")
-    fi
+    scanned_files=$((scanned_files+1))
+    set +e
+    grep -I -i -E -q "$patterns" "$f"
+    grep_rc=$?
+    set -e
+    case "$grep_rc" in
+      0)
+        matches=$((matches+1))
+        matched_files+=("$f")
+        ;;
+      1)
+        ;;
+      *)
+        echo "FAIL: grep exited $grep_rc on $f (invalid pattern or unreadable file)" >&2
+        exit 2
+        ;;
+    esac
   done < <(find "$dir" -type f -print0)
 done
+
+printf "Redaction check: scanned %d file(s)\n" "$scanned_files"
 
 if [ "${matches}" -gt 0 ]; then
   echo "FAIL: Detected secret-like plaintext in ${matches} file(s)."

@@ -81,10 +81,13 @@ private struct MenuBarMenuView: View {
                 var settings = try await SettingsStore.shared.load()
                 settings.widgetTrack2TimeScale = scale
                 try await SettingsStore.shared.save(settings)
+                // The refresher reloads both widget kinds itself when the
+                // snapshot changed; a second blanket reload only burns budget.
                 try await WidgetSnapshotRefresher().refresh(settings: settings)
                 NotificationCenter.default.post(name: Notification.Name("TokenMeterStoreDidUpdate"), object: nil)
-                WidgetCenter.shared.reloadAllTimelines()
             } catch {
+                DiagnosticsLogger(provider: .codex).warning("widget_scale_apply_failed", fields: ["error": .string(String(describing: error))])
+                DiagnosticsLogger(provider: .claude).warning("widget_scale_apply_failed", fields: ["error": .string(String(describing: error))])
             }
         }
     }
@@ -184,7 +187,8 @@ final class AppLocaleController: ObservableObject {
                     self?.setSetting(settings.locale)
                 }
             } catch {
-                assertionFailure("Settings load failed: \(String(describing: error))")
+                // Unreadable settings fall back to the system locale; the
+                // runtime logs the failure and runs on defaults.
             }
         }
     }
