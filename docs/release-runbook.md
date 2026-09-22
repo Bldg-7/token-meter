@@ -9,8 +9,7 @@ Prerequisites
 - Required secret: SPARKLE_PRIVATE_KEY (EdDSA private key used to sign the appcast; the workflow fails without it).
 - Signing secrets (all three required to sign, otherwise the build is ad-hoc signed and Gatekeeper blocks first launch):
   MACOS_CERTIFICATE_P12_BASE64 (Developer ID Application certificate, base64 of the .p12),
-  MACOS_CERTIFICATE_PASSWORD, MACOS_CODESIGN_IDENTITY (e.g. "Developer ID Application: Name (TEAMID)").
-  Optional: MACOS_TEAM_ID.
+  MACOS_CERTIFICATE_PASSWORD, MACOS_CODESIGN_IDENTITY ("Developer ID Application: Name (TEAMID)" or the certificate's SHA-1).
 - Notarization secrets (all three required; needs signing): NOTARY_API_KEY_ID, NOTARY_API_ISSUER_ID,
   NOTARY_API_KEY_P8_BASE64 (App Store Connect API key, base64 of the .p8).
 
@@ -23,8 +22,10 @@ Checklist (release-ready state)
   - Version tag: derive from Git tag or pass via workflow_dispatch inputs
   - Command: ./scripts/packaging/dmg_packager.sh "<APP_BUNDLE_PATH>" "<OUTPUT_DIR>" "<VERSION_TAG>"
 - Signing (when the signing secrets are set)
-  - The certificate is imported into a temporary keychain and xcodebuild signs the app with
-    ENABLE_HARDENED_RUNTIME=YES, so every nested item (widget, Sparkle) gets its own entitlements.
+  - The app is built ad-hoc (Xcode's manual signing would demand a provisioning profile for the
+    App Groups capability, which Developer ID distribution does not use), then signed inside out with
+    codesign and the hardened runtime: Sparkle's XPC services, Autoupdate and Updater.app, the
+    framework, the widget extension with its entitlements, and finally the app with its entitlements.
   - Both DMGs in dist/ (versioned and TokenMeter.dmg) are then signed:
     codesign --force --sign "<identity>" --timestamp "<DMG_PATH>"
 - Notarization (when the notarization secrets are set)

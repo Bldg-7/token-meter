@@ -132,10 +132,13 @@ jobs:
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Build Xcode Project (Release, ad-hoc)
-        if: env.HAS_CODESIGN != 'true'
+      - name: Build Xcode Project (Release)
         run: |
           set -euo pipefail
+          # Always built ad-hoc: Xcode's manual signing demands a provisioning
+          # profile for the App Groups capability, which Developer ID
+          # distribution neither needs nor gets. The real signature is applied
+          # below with codesign, inside out.
           xcodebuild \
             -project TokenMeter.xcodeproj \
             -scheme TokenMeter \
@@ -146,32 +149,54 @@ jobs:
             CODE_SIGNING_ALLOWED=YES \
             -quiet
 
-      - name: Build Xcode Project (Release, Developer ID)
+      - name: Sign app (Developer ID, hardened runtime)
         if: env.HAS_CODESIGN == 'true'
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
-          MACOS_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
         run: |
           set -euo pipefail
-          # Letting xcodebuild sign gives every nested item (widget extension,
-          # Sparkle framework and its XPC services) its own entitlements and
-          # the hardened runtime notarization requires.
-          TEAM_ARGS=()
-          if [[ -n "${MACOS_TEAM_ID:-}" ]]; then
-            TEAM_ARGS+=("DEVELOPMENT_TEAM=${MACOS_TEAM_ID}")
+          APP="build/Build/Products/Release/TokenMeter.app"
+          sign() {
+            codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$@"
+          }
+
+          # Sparkle ships helpers that must be signed before the framework that
+          # contains them, in the order its documentation gives. The XPC
+          # services keep the entitlements Sparkle built them with.
+          SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+          if [[ -d "$SPARKLE" ]]; then
+            SPARKLE_VERSION="$SPARKLE/Versions/B"
+            for xpc in "$SPARKLE_VERSION"/XPCServices/*.xpc; do
+              if [[ -d "$xpc" ]]; then
+                sign --preserve-metadata=entitlements "$xpc"
+              fi
+            done
+            if [[ -f "$SPARKLE_VERSION/Autoupdate" ]]; then
+              sign "$SPARKLE_VERSION/Autoupdate"
+            fi
+            if [[ -d "$SPARKLE_VERSION/Updater.app" ]]; then
+              sign "$SPARKLE_VERSION/Updater.app"
+            fi
+            sign "$SPARKLE"
           fi
-          xcodebuild \
-            -project TokenMeter.xcodeproj \
-            -scheme TokenMeter \
-            -configuration Release \
-            -derivedDataPath build \
-            CODE_SIGN_STYLE=Manual \
-            "CODE_SIGN_IDENTITY=${CODESIGN_IDENTITY}" \
-            ENABLE_HARDENED_RUNTIME=YES \
-            OTHER_CODE_SIGN_FLAGS=--timestamp \
-            ${TEAM_ARGS[@]+"${TEAM_ARGS[@]}"} \
-            -quiet
-          codesign --verify --deep --strict --verbose=2 "build/Build/Products/Release/TokenMeter.app"
+
+          # Any other embedded framework or library.
+          if [[ -d "$APP/Contents/Frameworks" ]]; then
+            find "$APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 \
+              \( -name '*.framework' -o -name '*.dylib' \) ! -name 'Sparkle.framework' -print0 |
+              while IFS= read -r -d '' item; do
+                sign "$item"
+              done
+          fi
+
+          # The widget extension carries its own (sandboxed) entitlements; the
+          # app is signed last so its seal covers everything above.
+          sign --entitlements TokenMeterWidget/TokenMeterWidget.entitlements \
+            "$APP/Contents/PlugIns/TokenMeterWidgetExtension.appex"
+          sign --entitlements TokenMeter/TokenMeter.entitlements "$APP"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "[SIGN] $(codesign -dvv "$APP" 2>&1 | grep -E '^(Authority=Developer ID|CodeDirectory)' | head -n 2 | tr '\n' ' ')"
 
       - name: Notarize and staple app
         if: env.HAS_CODESIGN == 'true' && env.HAS_NOTARY == 'true'
