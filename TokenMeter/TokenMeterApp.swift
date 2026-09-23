@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 import Sparkle
 import SwiftUI
@@ -8,6 +9,10 @@ struct TokenMeterApp: App {
     @StateObject private var runtime = AppRuntime()
     @StateObject private var appLocale = AppLocaleController()
     @StateObject private var sparkleUpdater = SparkleUpdaterService()
+
+    init() {
+        LaunchServicesRegistration.refreshAfterLaunch()
+    }
 
     var body: some Scene {
         MenuBarExtra("app.title", image: "StatusBarIcon") {
@@ -209,6 +214,43 @@ final class AppLocaleController: ObservableObject {
                 return .autoupdatingCurrent
             }
             return Locale(identifier: trimmed)
+        }
+    }
+}
+
+/// Re-registers the app bundle and its widget extension with LaunchServices
+/// on every launch, then reloads the widgets.
+///
+/// After an in-place update (Sparkle swaps the bundle under the same path)
+/// the LaunchServices database can keep the extension's previous version.
+/// chronod then rejects every timeline the extension produces ("Bundle
+/// version did not match; LaunchServices DB may need to be rebuilt") and the
+/// widget stays frozen on its last archive until the database is refreshed,
+/// which is what `lsregister -f -R` does by hand and this does on launch.
+enum LaunchServicesRegistration {
+    static func refreshAfterLaunch() {
+        DispatchQueue.global(qos: .utility).async {
+            var bundleURLs = [Bundle.main.bundleURL]
+            if let plugInsURL = Bundle.main.builtInPlugInsURL,
+               let plugIns = try? FileManager.default.contentsOfDirectory(
+                   at: plugInsURL,
+                   includingPropertiesForKeys: nil
+               )
+            {
+                bundleURLs += plugIns.filter { $0.pathExtension == "appex" }
+            }
+
+            for url in bundleURLs {
+                let status = LSRegisterURL(url as CFURL, true)
+                if status != noErr {
+                    DiagnosticsLogger(provider: .codex).warning(
+                        "launch_services_register_failed",
+                        fields: ["bundle": .string(url.lastPathComponent), "status": .int(Int(status))]
+                    )
+                }
+            }
+
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 }
