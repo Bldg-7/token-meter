@@ -6,7 +6,7 @@
     <true/>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.com.tokenmeter.app</string>
+        <string>SYZS4D43Z6.com.tokenmeter.app</string>
     </array>
 </dict>
 </plist>
