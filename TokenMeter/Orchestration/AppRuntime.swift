@@ -2709,7 +2709,12 @@ struct ProviderCollectionRuntime: Sendable {
     }
 
     private func dedupKey(for point: Track2TimelinePoint) -> String {
-        let ts = Int64((point.timestamp.timeIntervalSince1970 * 1000.0).rounded())
+        // Whole seconds, floored: track2.json stores `.iso8601` dates, which
+        // drop the fraction, while a fresh parse keeps the source's
+        // milliseconds. A finer key never matches a re-parsed point against its
+        // copy read back from disk, so each relaunch, which re-reads every log
+        // from byte 0, stored all of them again.
+        let ts = Int64(point.timestamp.timeIntervalSince1970.rounded(.down))
         let session = (point.sessionId ?? "").lowercased()
         let model = (point.model ?? "").lowercased()
         let prompt = point.promptTokens.map(String.init) ?? "-"
