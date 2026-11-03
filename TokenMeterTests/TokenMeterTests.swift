@@ -1501,6 +1501,96 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [2, 5, 7, 27])
     }
 
+    func testTrack2StoreKeepsOneCopyOfAMillisecondPointReReadAfterAReload() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+
+        // pi stamps turns to the millisecond, but track2.json keeps whole
+        // seconds, so the stored copy and a re-parse differ below the second.
+        let piSessionURL = piSessionsDirectory(homeDirectoryURL: homeDir)
+            .appendingPathComponent("2026-02-02T02-40-00-000Z_ses-pi-ms.jsonl")
+        try writePiSessionFile(
+            at: piSessionsDirectory(homeDirectoryURL: homeDir),
+            fileName: "2026-02-02T02-40-00-000Z_ses-pi-ms.jsonl",
+            header: piSessionHeaderObject(id: "ses-pi-ms", startedAt: "2026-02-02T02:40:00Z"),
+            entries: [
+                piAssistantEntry(
+                    id: "a1",
+                    provider: "openai",
+                    model: "gpt-5.6",
+                    timestampMs: 1_770_000_020_366,
+                    usage: ["input": 20, "output": 7, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 27]
+                ),
+            ]
+        )
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2URL = dir.appendingPathComponent("track2.json")
+
+        let firstPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(firstPoints.compactMap(\.totalTokens), [27])
+        let firstPersisted = try await runtime.persistTrack2Points(firstPoints, store: Track2Store(pointsURLOverride: track2URL))
+        XCTAssertEqual(firstPersisted, 1)
+
+        try appendPiEntry(
+            piAssistantEntry(
+                id: "a2",
+                provider: "openai",
+                model: "gpt-5.6",
+                timestampMs: 1_770_000_040_789,
+                usage: ["input": 4, "output": 3, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 7]
+            ),
+            to: piSessionURL
+        )
+
+        // The first turn comes back from the context tail with its
+        // milliseconds intact. A fresh store reads the truncated copy from
+        // disk, as after a relaunch, rather than the writer's in-memory cache,
+        // and the re-parse must still match it instead of joining it.
+        let secondPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(secondPoints.compactMap(\.totalTokens).sorted(), [7, 27])
+        let track2Store = Track2Store(pointsURLOverride: track2URL)
+        let secondPersisted = try await runtime.persistTrack2Points(secondPoints, store: track2Store)
+        XCTAssertEqual(secondPersisted, 1)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [7, 27])
+    }
+
+    func testPersistTrack2PointsCollapsesCopiesStoredByAMillisecondDedupKey() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: dir)
+
+        func makePoint(timestamp: Date) -> Track2TimelinePoint {
+            Track2TimelinePoint(
+                provider: .codex,
+                timestamp: timestamp,
+                sessionId: "ses-doubled",
+                model: "gpt-5.6",
+                promptTokens: 20,
+                completionTokens: 7,
+                totalTokens: 27,
+                sourceFile: "pi_session:test.jsonl",
+                confidence: .medium,
+                parserVersion: "test"
+            )
+        }
+
+        // Stores written while the key compared milliseconds hold every
+        // re-read turn twice, both copies truncated to the same second.
+        let storedCopy = makePoint(timestamp: Date(timeIntervalSince1970: 1_770_000_020))
+        try await track2Store.replaceAll([storedCopy, storedCopy])
+
+        let reparsed = makePoint(timestamp: Date(timeIntervalSince1970: 1_770_000_020.999))
+        _ = try await runtime.persistTrack2Points([reparsed], store: track2Store)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens), [27])
+    }
+
     func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
