@@ -1,7 +1,7 @@
 import Foundation
 
 struct CodexTrack2PrimaryParser {
-    static let parserVersion = "codex_track2_primary_v2"
+    static let parserVersion = "codex_track2_primary_v3"
     fileprivate static let nearbyModelLineWindow = 6
     fileprivate static let nearbyModelHistoryLimit = 64
 
@@ -145,11 +145,25 @@ struct CodexTrack2PrimaryParser {
             ]
         )
 
-        let eventType = firstString(
-            in: kv,
-            keyCandidates: ["event_type", "eventtype", "type", "event"]
-        )
-        let isTokenCountEvent = normalizedEventType(eventType) == "token_count"
+        // Codex rollouts wrap every line as {"type": …, "payload": {…}}, and
+        // only token_count events report a response's usage. The other line
+        // types carry context, or restate usage already counted: since CLI
+        // 0.166, token_usage_record repeats each response beside cumulative
+        // turn and thread totals, so counting it doubled every response and,
+        // when a cumulative total won the key lookup, inflated it further.
+        let isTokenCountEvent: Bool
+        let carriesUsage: Bool
+        if let rolloutPayload = object["payload"] as? [String: Any], object["type"] is String {
+            isTokenCountEvent = normalizedEventType(rolloutPayload["type"] as? String) == "tokencount"
+            carriesUsage = isTokenCountEvent
+        } else {
+            let eventType = firstString(
+                in: kv,
+                keyCandidates: ["event_type", "eventtype", "type", "event"]
+            )
+            isTokenCountEvent = normalizedEventType(eventType) == "tokencount"
+            carriesUsage = true
+        }
 
         let lastUsage = codexUsage(
             in: object,
@@ -195,7 +209,11 @@ struct CodexTrack2PrimaryParser {
         let promptTokens: Int?
         let completionTokens: Int?
         let totalTokensDirect: Int?
-        if isTokenCountEvent {
+        if carriesUsage == false {
+            promptTokens = nil
+            completionTokens = nil
+            totalTokensDirect = nil
+        } else if isTokenCountEvent {
             promptTokens = lastUsage?.promptTokens
             completionTokens = lastUsage?.completionTokens
             totalTokensDirect = lastUsage?.totalTokens
@@ -205,12 +223,12 @@ struct CodexTrack2PrimaryParser {
             totalTokensDirect = lastUsage?.totalTokens ?? genericTotalTokensDirect
         }
 
-        let cumulativeTotalTokens = totalUsage?.totalTokens ?? firstInt(
+        let cumulativeTotalTokens = carriesUsage ? (totalUsage?.totalTokens ?? firstInt(
             in: kv,
             keyCandidates: [
                 "cumulative_total_tokens", "running_total_tokens", "total_tokens_cumulative", "aggregate_total_tokens",
             ]
-        )
+        )) : nil
 
         let sessionId = firstString(
             in: kv,
