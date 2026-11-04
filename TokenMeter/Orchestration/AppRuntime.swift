@@ -440,6 +440,9 @@ struct ProviderCollectionRuntime: Sendable {
     var processRunner: ProcessRunner
     var httpRunner: HTTPRunner
     var environment: [String: String]
+    /// Reference time for the reset plausibility filter, so tests can pin it
+    /// and keep dated fixtures valid.
+    var now: @Sendable () -> Date
 
     init(
         homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -447,12 +450,14 @@ struct ProviderCollectionRuntime: Sendable {
         httpRunner: HTTPRunner = .live,
         // Defaults to empty so tests stay hermetic; the app passes the real
         // process environment at its single construction site.
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.homeDirectoryURL = homeDirectoryURL
         self.processRunner = processRunner
         self.httpRunner = httpRunner
         self.environment = environment
+        self.now = now
     }
 
     func collectTrack1Snapshot(provider: ProviderId, settings: AppSettings) throws -> Track1Snapshot {
@@ -888,7 +893,7 @@ struct ProviderCollectionRuntime: Sendable {
             ]
 
             if let resetAt,
-               let normalizedResetAt = normalizedResetDate(resetAt, windowSeconds: windowSeconds(forWindowId: windowId)) {
+               let normalizedResetAt = normalizedResetDate(resetAt, windowSeconds: windowSeconds(forWindowId: windowId), now: now()) {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 window["resetAt"] = formatter.string(from: normalizedResetAt)
@@ -972,7 +977,7 @@ struct ProviderCollectionRuntime: Sendable {
             ]
 
             if let resetAt = extractResetDate(fromJSONObject: limit),
-               let normalizedResetAt = normalizedResetDate(resetAt, windowSeconds: windowSeconds(forWindowId: windowId)) {
+               let normalizedResetAt = normalizedResetDate(resetAt, windowSeconds: windowSeconds(forWindowId: windowId), now: now()) {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 window["resetAt"] = formatter.string(from: normalizedResetAt)
@@ -1271,7 +1276,8 @@ struct ProviderCollectionRuntime: Sendable {
             if let resetAt,
                let normalizedResetAt = normalizedResetDate(
                    resetAt,
-                   windowSeconds: durationSeconds.map(TimeInterval.init) ?? windowSeconds(forWindowId: windowId)
+                   windowSeconds: durationSeconds.map(TimeInterval.init) ?? windowSeconds(forWindowId: windowId),
+                   now: now()
                )
             {
                 let formatter = ISO8601DateFormatter()
@@ -1577,7 +1583,8 @@ struct ProviderCollectionRuntime: Sendable {
             if let resetAt,
                let normalizedResetAt = normalizedResetDate(
                    resetAt,
-                   windowSeconds: durationMins.map { TimeInterval($0 * 60) } ?? windowSeconds(forWindowId: windowId)
+                   windowSeconds: durationMins.map { TimeInterval($0 * 60) } ?? windowSeconds(forWindowId: windowId),
+                   now: now()
                )
             {
                 let formatter = ISO8601DateFormatter()
@@ -1645,7 +1652,7 @@ struct ProviderCollectionRuntime: Sendable {
     /// the Codex weekly window, so allow 1.5). A past value means the data is
     /// stale (e.g. collected before an auth expiry) and a far-future value is
     /// garbage; drop both rather than display them.
-    func normalizedResetDate(_ resetAt: Date, windowSeconds: TimeInterval?, now: Date = Date()) -> Date? {
+    func normalizedResetDate(_ resetAt: Date, windowSeconds: TimeInterval?, now: Date) -> Date? {
         guard resetAt > now else {
             return nil
         }

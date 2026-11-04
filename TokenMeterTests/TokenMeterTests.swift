@@ -1886,6 +1886,11 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertNil(runtime.normalizedResetDate(now.addingTimeInterval(-60), windowSeconds: nil, now: now))
     }
 
+    /// Track 1 collection fixtures report resets on 2026-03-01..06. The
+    /// plausibility filter keeps only future resets within 1.5 windows, so
+    /// pin the runtime clock just before them instead of using wall time.
+    private static let track1FixtureNow = Date(timeIntervalSince1970: 1_772_308_800) // 2026-02-28T20:00:00Z
+
     func testCollectTrack1SnapshotClaudeMethodBOAuthUsageWindowsWithPlanFromProfile() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let homeDir = dir.appendingPathComponent("home", isDirectory: true)
@@ -1935,7 +1940,8 @@ final class TokenMeterTests: XCTestCase {
                     )
                 }
                 return .init(statusCode: 500, body: Data())
-            })
+            }),
+            now: { Self.track1FixtureNow }
         )
 
         let settings = AppSettings(
@@ -2072,7 +2078,8 @@ final class TokenMeterTests: XCTestCase {
                     return .init(statusCode: 503, body: Data())
                 }
                 return .init(statusCode: 500, body: Data())
-            })
+            }),
+            now: { Self.track1FixtureNow }
         )
 
         let settings = AppSettings(
@@ -2361,13 +2368,14 @@ final class TokenMeterTests: XCTestCase {
 
                     let response = """
                     {"jsonrpc":"2.0","id":1,"result":{"ok":true}}
-                    {"jsonrpc":"2.0","id":2,"result":{"planType":"chatgpt_pro","primary":{"usedPercent":42,"windowDurationMins":10080,"resetsAt":"2026-03-01T00:00:00Z"},"secondary":{"usedPercent":15,"remainingPercent":85,"resetsAt":1700000000}}}
+                    {"jsonrpc":"2.0","id":2,"result":{"planType":"chatgpt_pro","primary":{"usedPercent":42,"windowDurationMins":10080,"resetsAt":"2026-03-01T00:00:00Z"},"secondary":{"usedPercent":15,"remainingPercent":85,"resetsAt":1772496000}}}
                     """
                     return .init(status: 0, stdout: Data(response.utf8), stderr: Data())
                 default:
                     return .init(status: 1, stdout: Data(), stderr: Data())
                 }
-            })
+            }),
+            now: { Self.track1FixtureNow }
         )
 
         let settings = AppSettings(
@@ -2421,13 +2429,14 @@ final class TokenMeterTests: XCTestCase {
                 case ["app-server"]:
                     let response = """
                     {"jsonrpc":"2.0","id":1,"result":{"ok":true}}
-                    {"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"planType":"pro","primary":{"usedPercent":64,"resetsAt":"2026-03-02T00:00:00Z","windowDurationMins":10080},"secondary":{"usedPercent":25,"remainingPercent":75,"resetsAt":1700000000}}}}
+                    {"jsonrpc":"2.0","id":2,"result":{"rateLimits":{"planType":"pro","primary":{"usedPercent":64,"resetsAt":"2026-03-02T00:00:00Z","windowDurationMins":10080},"secondary":{"usedPercent":25,"remainingPercent":75,"resetsAt":1772496000}}}}
                     """
                     return .init(status: 0, stdout: Data(response.utf8), stderr: Data())
                 default:
                     return .init(status: 1, stdout: Data(), stderr: Data())
                 }
-            })
+            }),
+            now: { Self.track1FixtureNow }
         )
 
         let settings = AppSettings(
