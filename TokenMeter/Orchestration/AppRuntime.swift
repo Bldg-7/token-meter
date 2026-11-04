@@ -1946,10 +1946,17 @@ struct ProviderCollectionRuntime: Sendable {
     private func collectCodexTrack2Points() throws -> [Track2TimelinePoint] {
         let codexRoot = homeDirectoryURL.appendingPathComponent(".codex", isDirectory: true)
 
-        let primaryFiles = recursiveFiles(
-            at: codexRoot.appendingPathComponent("sessions", isDirectory: true),
-            where: { $0.pathExtension.lowercased() == "jsonl" }
-        )
+        // Archiving a thread moves its rollout out of `sessions`. The dedup key
+        // ignores the source path, so a moved file re-read here adds nothing
+        // twice. Codex also compresses cold rollouts to `.jsonl.zst`, which no
+        // decoder bundled with macOS reads; those are only counted if they were
+        // read before compression.
+        let primaryFiles = ["sessions", "archived_sessions"].flatMap { folder in
+            recursiveFiles(
+                at: codexRoot.appendingPathComponent(folder, isDirectory: true),
+                where: { $0.pathExtension.lowercased() == "jsonl" }
+            )
+        }
 
         let primaryPoints = collectIncrementalTrack2Points(
             from: primaryFiles,

@@ -391,6 +391,31 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(output.lastKnownModel, "gpt-5.4")
     }
 
+    func testCodexTrack2PrimaryParserCountsEachResponseOnceBesideTokenUsageRecords() {
+        // Codex CLI 0.166 shape: every response is logged as a token_usage_record
+        // (per-response usage beside cumulative turn and thread totals) and then
+        // as a token_count. The second response's cumulative 1961153 sorts
+        // before its own 245000 as text, which a key-name lookup would pick.
+        let lines = [
+            #"{"timestamp":"2026-11-03T07:09:50.100Z","type":"turn_context","payload":{"turn_id":"turn_1","model":"gpt-6.1-sol"}}"#,
+            #"{"timestamp":"2026-11-03T07:09:57.524Z","type":"token_usage_record","payload":{"thread_id":"thr_1","turn_id":"turn_1","session_id":"thr_1","response_id":"resp_1","usage":{"input_tokens":1700000,"output_tokens":16153,"total_tokens":1716153},"turn_token_usage":{"input_tokens":1700000,"output_tokens":16153,"total_tokens":1716153},"thread_token_usage":{"input_tokens":1700000,"output_tokens":16153,"total_tokens":1716153}}}"#,
+            #"{"timestamp":"2026-11-03T07:09:57.599Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1700000,"output_tokens":16153,"total_tokens":1716153},"last_token_usage":{"input_tokens":1700000,"output_tokens":16153,"total_tokens":1716153}}}}"#,
+            #"{"timestamp":"2026-11-03T07:10:05.035Z","type":"token_usage_record","payload":{"thread_id":"thr_1","turn_id":"turn_1","session_id":"thr_1","response_id":"resp_2","usage":{"input_tokens":240000,"output_tokens":5000,"total_tokens":245000},"turn_token_usage":{"input_tokens":1940000,"output_tokens":21153,"total_tokens":1961153},"thread_token_usage":{"input_tokens":1940000,"output_tokens":21153,"total_tokens":1961153}}}"#,
+            #"{"timestamp":"2026-11-03T07:10:05.110Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1940000,"output_tokens":21153,"total_tokens":1961153},"last_token_usage":{"input_tokens":240000,"output_tokens":5000,"total_tokens":245000}}}}"#,
+        ]
+
+        let output = CodexTrack2PrimaryParser.timelinePoints(
+            fromJSONL: lines.joined(separator: "\n"),
+            sourceFile: "sessions/2026/11/03/rollout-2026-11-03T16-09-45-thr_1.jsonl",
+            initialModel: nil
+        )
+
+        XCTAssertEqual(output.points.map(\.totalTokens), [1_716_153, 245_000])
+        XCTAssertEqual(output.points.map(\.promptTokens), [1_700_000, 240_000])
+        XCTAssertEqual(output.points.map(\.completionTokens), [16_153, 5_000])
+        XCTAssertEqual(output.points.map(\.model), ["gpt-6.1-sol", "gpt-6.1-sol"])
+    }
+
     func testCodexTrack2PrimaryParserUsesInitialModelWhenIncrementalDeltaHasNoModelLine() {
         // Simulates the second incremental cycle: only token_count events arrive, the
         // turn_context that established the model is no longer in the parse window.
@@ -1589,6 +1614,32 @@ final class TokenMeterTests: XCTestCase {
 
         let persisted = try await track2Store.loadAll()
         XCTAssertEqual(persisted.compactMap(\.totalTokens), [27])
+    }
+
+    func testCodexTrack2CollectsRolloutsMovedToArchivedSessions() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026/11/03", isDirectory: true)
+        let archivedDir = homeDir.appendingPathComponent(".codex/archived_sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: archivedDir, withIntermediateDirectories: true)
+
+        try Data(
+            """
+            {"timestamp":1770100000,"session_id":"ses_live","model":"gpt-6.1-sol","input_tokens":3,"output_tokens":2}
+            """.appending("\n").utf8
+        ).write(to: sessionsDir.appendingPathComponent("rollout-live.jsonl"), options: [.atomic])
+        try Data(
+            """
+            {"timestamp":1770100100,"session_id":"ses_archived","model":"gpt-6-astra","input_tokens":7,"output_tokens":4}
+            """.appending("\n").utf8
+        ).write(to: archivedDir.appendingPathComponent("rollout-archived.jsonl"), options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let points = try runtime.collectTrack2Points(provider: .codex)
+
+        XCTAssertEqual(points.compactMap(\.sessionId), ["ses_live", "ses_archived"])
+        XCTAssertEqual(points.compactMap(\.totalTokens), [5, 11])
     }
 
     func testTrack2IncrementalFileCursorHandlesPartialJSONLAppend() async throws {
