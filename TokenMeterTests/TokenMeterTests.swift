@@ -1733,6 +1733,89 @@ final class TokenMeterTests: XCTestCase {
         XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), [5, 12, 20])
     }
 
+    func testTrack2IncrementalReaderReplaysContextFromALogLargerThanTheBudget() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-26", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        func line(_ index: Int) -> String {
+            #"{"timestamp":\#(1_770_100_000 + index),"session_id":"ses_long","model":"gpt-5.6","input_tokens":\#(index + 1),"output_tokens":1}"#
+        }
+
+        // About 100KB, so the next pass rereads only the tail of what this
+        // one parsed, starting at a line boundary inside the file.
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data((0..<1_000).map { line($0) + "\n" }.joined().utf8).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPersisted = try await runtime.persistTrack2Points(
+            try runtime.collectTrack2Points(provider: .codex),
+            store: track2Store
+        )
+        XCTAssertEqual(firstPersisted, 1_000)
+        XCTAssertEqual(try runtime.collectTrack2Points(provider: .codex), [])
+
+        // One whole line and one torn mid-number, then the rest of it.
+        let tornLine = line(1_001)
+        let tornAt = tornLine.index(tornLine.startIndex, offsetBy: 83)
+        try appendText(line(1_000) + "\n" + tornLine[..<tornAt], to: jsonlURL)
+        let secondPersisted = try await runtime.persistTrack2Points(
+            try runtime.collectTrack2Points(provider: .codex),
+            store: track2Store
+        )
+        XCTAssertEqual(secondPersisted, 1)
+
+        try appendText(String(tornLine[tornAt...]) + "\n", to: jsonlURL)
+        let thirdPersisted = try await runtime.persistTrack2Points(
+            try runtime.collectTrack2Points(provider: .codex),
+            store: track2Store
+        )
+        XCTAssertEqual(thirdPersisted, 1)
+
+        let persisted = try await track2Store.loadAll()
+        XCTAssertEqual(persisted.compactMap(\.totalTokens).sorted(), Array(2...1_003))
+        XCTAssertEqual(Set(persisted.compactMap(\.model)), ["gpt-5.6"])
+    }
+
+    func testTrack2IncrementalReaderResumesAfterALastLineLongerThanTheBudget() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDir = dir.appendingPathComponent("home", isDirectory: true)
+        let sessionsDir = homeDir.appendingPathComponent(".codex/sessions/2026-02-26", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+        // The last line alone outruns the context budget, so the next pass
+        // has nothing to replay and resumes exactly at the old end of file.
+        let padding = String(repeating: "x", count: 70_000)
+        let jsonlURL = sessionsDir.appendingPathComponent("main.jsonl")
+        try Data(
+            """
+            {"timestamp":1770100000,"session_id":"ses_wide","model":"gpt-5.6","input_tokens":3,"output_tokens":2}
+            {"timestamp":1770100001,"session_id":"ses_wide","model":"gpt-5.6","note":"\(padding)","input_tokens":7,"output_tokens":4}
+            """.appending("\n").utf8
+        ).write(to: jsonlURL, options: [.atomic])
+
+        let runtime = ProviderCollectionRuntime(homeDirectoryURL: homeDir)
+        let track2Store = Track2Store(pointsURLOverride: dir.appendingPathComponent("track2.json"))
+
+        let firstPersisted = try await runtime.persistTrack2Points(
+            try runtime.collectTrack2Points(provider: .codex),
+            store: track2Store
+        )
+        XCTAssertEqual(firstPersisted, 2)
+
+        try appendText(
+            #"{"timestamp":1770100002,"session_id":"ses_wide","model":"gpt-5.6","input_tokens":10,"output_tokens":10}"# + "\n",
+            to: jsonlURL
+        )
+        let secondPoints = try runtime.collectTrack2Points(provider: .codex)
+        XCTAssertEqual(secondPoints.compactMap(\.totalTokens), [20])
+        let secondPersisted = try await runtime.persistTrack2Points(secondPoints, store: track2Store)
+        XCTAssertEqual(secondPersisted, 1)
+    }
+
     func testTrack2ParsersSurviveABufferStartingMidCharacter() {
         // The context tail is capped by a byte budget, so a replayed prefix can
         // begin inside a multi-byte character when a single line outruns the

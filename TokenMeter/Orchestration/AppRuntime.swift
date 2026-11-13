@@ -2277,45 +2277,50 @@ struct ProviderCollectionRuntime: Sendable {
             }
 
             let previousCursor = currentCursors[filePath]
-            var readOffset: Int64 = 0
-            var parsePrefix = Data()
+            var readStart: Int64 = 0
+            // Bytes at the head of the buffer that an earlier pass already
+            // read: the replayed context, then any torn line still waiting
+            // for its newline.
+            var replayedCount = 0
             let initialModel = previousCursor?.lastKnownModel
 
             if let previousCursor {
                 if previousCursor.matchesIdentity(with: metadata) == false || metadata.fileSize < previousCursor.offset {
-                    readOffset = 0
+                    readStart = 0
                 } else if metadata.fileSize == previousCursor.offset {
                     if metadata.modifiedAt == previousCursor.modifiedAt {
                         updatedCursors[filePath] = previousCursor
                         continue
                     }
-                    readOffset = 0
+                    readStart = 0
                 } else {
-                    readOffset = previousCursor.offset
-                    parsePrefix.reserveCapacity(previousCursor.contextTail.count + previousCursor.pendingTail.count)
-                    parsePrefix.append(previousCursor.contextTail)
-                    parsePrefix.append(previousCursor.pendingTail)
+                    readStart = previousCursor.replayStart
+                    replayedCount = Int(previousCursor.offset - previousCursor.replayStart)
                 }
             }
 
-            guard let deltaData = readTrack2FileData(fileURL, fromOffset: readOffset) else {
+            // Read no further than the size measured above. It becomes
+            // `offset`, and the next pass takes everything before it as read
+            // here and everything after it as new.
+            guard let parseBuffer = readTrack2FileData(fileURL, from: readStart, to: metadata.fileSize) else {
                 continue
             }
 
-            var parseBuffer = parsePrefix
-            parseBuffer.append(deltaData)
-
+            // A pass can also resume with nothing to replay, after a last
+            // line longer than the context budget; only a read from byte 0
+            // with no earlier offset is a fresh read of the whole file.
+            let readsWholeFile = readStart == 0 && replayedCount == 0
             let split = splitCompleteJSONLData(parseBuffer)
             let parseData: Data
-            var pendingTail = split.pending
-            if readOffset == 0 {
+            var pendingCount = split.pending.count
+            if readsWholeFile {
                 parseData = parseBuffer
-                if pendingTail.isEmpty == false,
-                   parser(pendingTail, filePath, initialModel).points.isEmpty == false
+                if pendingCount > 0,
+                   parser(split.pending, filePath, initialModel).points.isEmpty == false
                 {
-                    pendingTail = Data()
+                    pendingCount = 0
                 }
-            } else if split.complete.count > parsePrefix.count {
+            } else if split.complete.count > replayedCount {
                 parseData = split.complete
             } else {
                 parseData = Data()
@@ -2330,29 +2335,26 @@ struct ProviderCollectionRuntime: Sendable {
                 }
             }
 
-            // Whatever stays buffered in `pendingTail` is replayed as a prefix
-            // on the next cycle, so it must not also be baked into the context
-            // tail: the fragment would be glued to a copy of itself and the
-            // entry it belongs to could never be reassembled. Only the
-            // full-read branch can hit that, since it parses the whole buffer
-            // including the torn trailing line.
-            let contextSource: Data
+            // The next pass rereads the last lines parsed here as context,
+            // then everything after them. A torn trailing line is not part of
+            // that context: it is reread anyway, and parsed only once its
+            // newline lands. The full-read branch counts a trailing line that
+            // already parses, so it stays in the context. With nothing new
+            // parsed, the next pass starts where this one did.
+            let replayStart: Int64
             if parseData.isEmpty {
-                contextSource = previousCursor?.contextTail ?? Data()
-            } else if pendingTail.isEmpty {
-                contextSource = parseData
+                replayStart = readStart
             } else {
-                contextSource = split.complete
+                let parsedCount = pendingCount == 0 ? parseBuffer.count : split.complete.count
+                replayStart = readStart + Int64(track2ContextStart(in: parseBuffer, parsedCount: parsedCount))
             }
-            let contextTail = trimmedTrack2ContextTail(contextSource)
 
             updatedCursors[filePath] = Track2FileCursor(
                 inode: metadata.inode,
                 modifiedAt: metadata.modifiedAt,
                 fileSize: metadata.fileSize,
                 offset: metadata.fileSize,
-                pendingTail: pendingTail,
-                contextTail: contextTail,
+                replayStart: replayStart,
                 lastKnownModel: lastKnownModel
             )
         }
@@ -2382,8 +2384,11 @@ struct ProviderCollectionRuntime: Sendable {
         )
     }
 
-    private func readTrack2FileData(_ fileURL: URL, fromOffset offset: Int64) -> Data? {
-        guard offset >= 0, let safeOffset = UInt64(exactly: offset) else {
+    private func readTrack2FileData(_ fileURL: URL, from start: Int64, to end: Int64) -> Data? {
+        guard start >= 0, end >= start,
+              let safeStart = UInt64(exactly: start),
+              let count = Int(exactly: end - start)
+        else {
             return nil
         }
 
@@ -2395,8 +2400,8 @@ struct ProviderCollectionRuntime: Sendable {
         }
 
         do {
-            try handle.seek(toOffset: safeOffset)
-            return try handle.readToEnd() ?? Data()
+            try handle.seek(toOffset: safeStart)
+            return try handle.read(upToCount: count) ?? Data()
         } catch {
             return nil
         }
@@ -2407,26 +2412,32 @@ struct ProviderCollectionRuntime: Sendable {
             return (Data(), data)
         }
 
+        // `complete` shares the buffer, which can be a whole log on a first
+        // read, instead of copying it. As a prefix it still starts at index
+        // zero, like the copy it replaces; only the short torn line is copied.
         let splitIndex = data.index(after: lastLineFeedIndex)
-        return (Data(data[..<splitIndex]), Data(data[splitIndex...]))
+        return (data[..<splitIndex], Data(data[splitIndex...]))
     }
 
-    private func trimmedTrack2ContextTail(_ data: Data) -> Data {
-        guard data.count > Self.track2ContextTailBytes else {
-            return data
+    /// Where the context replayed by the next pass begins within the first
+    /// `parsedCount` bytes of `data`: the last `track2ContextTailBytes` of them.
+    private func track2ContextStart(in data: Data, parsedCount: Int) -> Int {
+        guard parsedCount > Self.track2ContextTailBytes else {
+            return 0
         }
-        let start = data.index(data.endIndex, offsetBy: -Self.track2ContextTailBytes)
-        let tail = data[start...]
+        let budgetStart = parsedCount - Self.track2ContextTailBytes
+        let lower = data.index(data.startIndex, offsetBy: budgetStart)
+        let upper = data.index(data.startIndex, offsetBy: parsedCount)
 
         // The budget is a byte count, so it lands wherever it lands — including
         // inside a multi-byte character. Resuming at the next line boundary
         // keeps the replayed prefix decodable; a single line longer than the
         // whole budget has no boundary to find, which is why the parsers decode
         // leniently as well.
-        guard let lineFeedIndex = tail.firstIndex(of: 0x0A) else {
-            return Data(tail)
+        guard let lineFeedIndex = data[lower..<upper].firstIndex(of: 0x0A) else {
+            return budgetStart
         }
-        return Data(tail[tail.index(after: lineFeedIndex)...])
+        return data.distance(from: data.startIndex, to: lineFeedIndex) + 1
     }
 
     private func track2StateHomeKey() -> String {
@@ -2573,8 +2584,12 @@ struct ProviderCollectionRuntime: Sendable {
         var modifiedAt: TimeInterval
         var fileSize: Int64
         var offset: Int64
-        var pendingTail: Data
-        var contextTail: Data
+        // Where the next pass starts reading: the last lines already parsed,
+        // replayed as context, then any torn line after them. Logs only grow
+        // by appending, so these bytes are read back from the file rather
+        // than kept here; a copy cost up to 64KB for every log on disk, over
+        // 300MB on a machine with a few thousand sessions.
+        var replayStart: Int64
         // Carries forward the last model observed in this file so that
         // incremental cycles after the file head has scrolled past the
         // 64KB context tail can still tag token events with a model.
